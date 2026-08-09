@@ -37,7 +37,7 @@ Published by GitHub Actions to:
 ```bash
 make test
 make build
-./scripts/smoke.sh
+go test -count=1 -race ./scripts/smoke/ -run TestSmokeWebhookCreatesJobAndSecret -v
 ```
 
 With App credentials:

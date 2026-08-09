@@ -10,6 +10,8 @@ GitHub Actions workflow: [.github/workflows/ci.yaml](../.github/workflows/ci.yam
 | Push to `main` | `test`, `publish` (push images) |
 | `workflow_dispatch` | Same as push to `main` |
 
+The test job runs `go test ./... -race` (includes offline webhook smoke tests in `scripts/smoke/`).
+
 ## Images
 
 | Image | Dockerfile |
@@ -33,7 +35,7 @@ Update [deploy/manifests/configmap.yaml](../deploy/manifests/configmap.yaml) and
 
 ```bash
 make test
-./scripts/smoke.sh
+go test -count=1 -race ./scripts/smoke/ -run TestSmokeWebhookCreatesJobAndSecret -v
 make image REGISTRY=ghcr.io/muandane TAG=dev
 ```
 
