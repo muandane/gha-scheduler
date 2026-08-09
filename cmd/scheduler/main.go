@@ -323,7 +323,7 @@ func startPodInformer(ctx context.Context, k8s kubernetes.Interface, namespace s
 	factory := informers.NewSharedInformerFactoryWithOptions(k8s, 30*time.Second, informers.WithNamespace(namespace))
 	informer := factory.Core().V1().Pods().Informer()
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		UpdateFunc: func(oldObj, newObj interface{}) {
+		UpdateFunc: func(oldObj, newObj any) {
 			oldPod, _ := oldObj.(*corev1.Pod)
 			newPod, _ := newObj.(*corev1.Pod)
 			watcher.OnUpdate(ctx, oldPod, newPod)

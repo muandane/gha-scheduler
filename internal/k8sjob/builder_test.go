@@ -355,4 +355,5 @@ func envEqual(a, b []corev1.EnvVar) bool {
 	return true
 }
 
-func int32Ptr(v int32) *int32 { return &v }
+//go:fix inline
+func int32Ptr(v int32) *int32 { return new(v) }

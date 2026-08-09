@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/muandane/gha-scheduler/internal/ghclient"
@@ -20,14 +21,14 @@ func TestListRunsPaginates(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Query().Get("page") {
 		case "1":
-			var runs string
-			for i := 0; i < 100; i++ {
+			var runs strings.Builder
+			for i := range 100 {
 				if i > 0 {
-					runs += ","
+					runs.WriteString(",")
 				}
-				runs += fmt.Sprintf(`{"id":%d,"status":"queued"}`, i+1)
+				runs.WriteString(fmt.Sprintf(`{"id":%d,"status":"queued"}`, i+1))
 			}
-			_, _ = w.Write([]byte(`{"workflow_runs":[` + runs + `]}`))
+			_, _ = w.Write([]byte(`{"workflow_runs":[` + runs.String() + `]}`))
 		case "2":
 			_, _ = w.Write([]byte(`{"workflow_runs":[{"id":101,"status":"queued"}]}`))
 		default:

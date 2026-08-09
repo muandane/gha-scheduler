@@ -1,6 +1,6 @@
 module github.com/muandane/gha-scheduler
 
-go 1.24.0
+go 1.26.0
 
 require (
 	go.opentelemetry.io/otel v1.35.0

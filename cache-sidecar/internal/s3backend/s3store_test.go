@@ -32,11 +32,11 @@ func TestS3StorePutGetList(t *testing.T) {
 						keys = append(keys, k)
 					}
 				}
-				var contents string
+				var contents strings.Builder
 				for _, k := range keys {
-					contents += "<Contents><Key>" + k + "</Key></Contents>"
+					contents.WriteString("<Contents><Key>" + k + "</Key></Contents>")
 				}
-				_, _ = w.Write([]byte("<ListBucketResult>" + contents + "</ListBucketResult>"))
+				_, _ = w.Write([]byte("<ListBucketResult>" + contents.String() + "</ListBucketResult>"))
 				return
 			}
 			key := strings.TrimPrefix(path, bucketPrefix)

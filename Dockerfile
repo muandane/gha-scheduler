@@ -1,5 +1,5 @@
 # Build: docker build -f Dockerfile -t gha-scheduler:local .
-FROM golang:1.24-alpine AS build
+FROM golang:1.26-alpine AS build
 RUN apk add --no-cache git ca-certificates
 WORKDIR /src
 COPY go.mod go.sum ./

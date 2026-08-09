@@ -189,7 +189,8 @@ func memoryForSpec(spec labelquery.RunnerSpec, memPerCPU string) resource.Quanti
 	return total
 }
 
-func int32Ptr(v int32) *int32 { return &v }
+//go:fix inline
+func int32Ptr(v int32) *int32 { return new(v) }
 
 func jobLabels(cfg Config) map[string]string {
 	return map[string]string{
