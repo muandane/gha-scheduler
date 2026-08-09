@@ -54,8 +54,8 @@ func TestBuildJob(t *testing.T) {
 					},
 				},
 				Spec: batchv1.JobSpec{
-					BackoffLimit:            int32Ptr(0),
-					TTLSecondsAfterFinished: int32Ptr(60),
+					BackoffLimit:            new(int32(0)),
+					TTLSecondsAfterFinished: new(int32(60)),
 					Template: corev1.PodTemplateSpec{
 						Spec: corev1.PodSpec{
 							NodeSelector: map[string]string{
@@ -126,8 +126,8 @@ func TestBuildJob(t *testing.T) {
 					},
 				},
 				Spec: batchv1.JobSpec{
-					BackoffLimit:            int32Ptr(0),
-					TTLSecondsAfterFinished: int32Ptr(60),
+					BackoffLimit:            new(int32(0)),
+					TTLSecondsAfterFinished: new(int32(60)),
 					Template: corev1.PodTemplateSpec{
 						Spec: corev1.PodSpec{
 							NodeSelector: map[string]string{

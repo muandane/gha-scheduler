@@ -160,8 +160,8 @@ func BuildJob(cfg Config, spec labelquery.RunnerSpec) *batchv1.Job {
 			Labels:    labels,
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit:            int32Ptr(0),
-			TTLSecondsAfterFinished: int32Ptr(60),
+			BackoffLimit:            new(int32(0)),
+			TTLSecondsAfterFinished: new(int32(60)),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,
