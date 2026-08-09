@@ -1,5 +1,4 @@
-// Integration dry-run: mint GH App installation token and call generate-jit-config.
-// Does not register a runner — validates App creds + API reachability.
+// Integration dry-run: mint GH App installation token, call generate-jit-config, then delete the transient runner.
 package main
 
 import (
@@ -39,13 +38,22 @@ func main() {
 	if err != nil {
 		fatal("generate-jit-config", err)
 	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if resp.RunnerID != 0 {
+			if err := client.DeleteRunner(cleanupCtx, owner, repo, resp.RunnerID); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: delete runner %d: %v\n", resp.RunnerID, err)
+			}
+		}
+	}()
 
 	if resp.EncodedJITConfig == "" {
 		fmt.Fprintln(os.Stderr, "empty encoded_jit_config")
 		os.Exit(1)
 	}
-	fmt.Printf("ok: generate-jit-config owner=%s repo=%s runner=%s encoded_len=%d\n",
-		owner, repo, resp.RunnerName, len(resp.EncodedJITConfig))
+	fmt.Printf("ok: generate-jit-config owner=%s repo=%s runner=%s runner_id=%d encoded_len=%d\n",
+		owner, repo, resp.RunnerName, resp.RunnerID, len(resp.EncodedJITConfig))
 }
 
 func envOr(key, fallback string) string {

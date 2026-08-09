@@ -64,6 +64,13 @@ func BuildJob(cfg Config, spec labelquery.RunnerSpec) *batchv1.Job {
 	runner := corev1.Container{
 		Name:  "runner",
 		Image: image,
+		Env: []corev1.EnvVar{
+			{Name: "RUNNER_EPHEMERAL", Value: "true"},
+			{Name: "DISABLE_RUNNER_UPDATE", Value: "true"},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsNonRoot: boolPtr(true),
+		},
 		Command: []string{
 			"/bin/bash",
 			"-c",
@@ -191,6 +198,8 @@ func memoryForSpec(spec labelquery.RunnerSpec, memPerCPU string) resource.Quanti
 
 //go:fix inline
 func int32Ptr(v int32) *int32 { return new(v) }
+
+func boolPtr(v bool) *bool { return new(v) }
 
 func jobLabels(cfg Config) map[string]string {
 	return map[string]string{

@@ -21,6 +21,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -33,6 +35,7 @@ import (
 	"github.com/muandane/gha-scheduler/internal/ghapp"
 	"github.com/muandane/gha-scheduler/internal/ghclient"
 	"github.com/muandane/gha-scheduler/internal/informer"
+	"github.com/muandane/gha-scheduler/internal/k8sjob"
 	"github.com/muandane/gha-scheduler/internal/labelquery"
 	"github.com/muandane/gha-scheduler/internal/reconciler"
 	"github.com/muandane/gha-scheduler/internal/tracing"
@@ -83,6 +86,7 @@ func main() {
 	spanEmitter := tracing.NewSpanEmitter(tracer, nil, jobMetrics)
 
 	labelDefaults := dispatch.LabelDefaults{CPU: cfg.DefaultCPU, Arch: cfg.DefaultArch}
+	jobLock := dispatch.NewLeaseLocker(k8s, cfg.Namespace, cfg.LockIdentity, 0)
 	dispatcher := dispatch.New(dispatch.Config{
 		Namespace:           cfg.Namespace,
 		RunnerImage:         cfg.RunnerImage,
@@ -112,10 +116,14 @@ func main() {
 			jobMetrics.RecordDispatchError(ctx, reason)
 		},
 	}, k8s, gh)
+	dispatcher.SetLocker(jobLock)
+
+	go spanEmitter.Registry().RunEviction(ctx, time.Hour, 5*time.Minute)
 
 	wh := webhook.New(webhook.Config{
 		Secret:        cfg.WebhookSecret,
 		LabelDefaults: labelDefaults,
+		Metrics:       jobMetrics,
 		OnQueued: func(ctx context.Context, req dispatch.Request) {
 			spanEmitter.WebhookReceived(ctx, map[string]string{
 				"repo":   req.Owner + "/" + req.Repo,
@@ -149,11 +157,22 @@ func main() {
 		Interval:       cfg.ReconcileInterval,
 		StaleThreshold: cfg.StaleThreshold,
 		LabelDefaults:  labelDefaults,
+		OnBeforeDispatch: func(ctx context.Context, req dispatch.Request) {
+			spanEmitter.ReconcileDispatch(ctx, req)
+		},
 	}, gh, dispatcher, k8s)
 
-	startLeaderElectedReconciler(ctx, k8s, cfg, rec)
+	orphanSweep := reconciler.NewOrphanRunnerSweep(reconciler.OrphanSweepConfig{
+		Namespace: cfg.Namespace,
+		Repos:     cfg.Repos,
+		Grace:     cfg.OrphanRunnerGrace,
+		Metrics:   jobMetrics,
+	}, gh, k8s, jobLock)
+
+	startLeaderElectedReconciler(ctx, k8s, cfg, rec, orphanSweep)
 
 	<-ctx.Done()
+	wh.Wait()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
@@ -188,6 +207,7 @@ type appConfig struct {
 	SpotTolerationKey   string
 	SpotTolerationValue string
 	LockIdentity        string
+	OrphanRunnerGrace   time.Duration
 }
 
 func loadConfig() (appConfig, error) {
@@ -227,6 +247,7 @@ func loadConfig() (appConfig, error) {
 	cfg.SpotTolerationKey = env("GHA_SPOT_TOLERATION_KEY", "spot")
 	cfg.SpotTolerationValue = env("GHA_SPOT_TOLERATION_VALUE", "true")
 	cfg.LockIdentity = fmt.Sprintf("%s-%d", hostname(), os.Getpid())
+	cfg.OrphanRunnerGrace = envDuration("GHA_ORPHAN_RUNNER_GRACE", 2*time.Minute)
 
 	if cfg.WebhookSecret == "" {
 		return cfg, fmt.Errorf("GHA_WEBHOOK_SECRET is required")
@@ -281,6 +302,7 @@ func newGHClient(cfg appConfig) (*ghclient.Client, error) {
 
 func setupTelemetry(ctx context.Context, serviceName string) (*sdktrace.TracerProvider, *metric.MeterProvider, error) {
 	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+		slog.Warn("OTEL_EXPORTER_OTLP_ENDPOINT unset; metrics and traces are no-ops")
 		tp := sdktrace.NewTracerProvider()
 		mp := metric.NewMeterProvider()
 		otel.SetTracerProvider(tp)
@@ -320,9 +342,25 @@ func setupTelemetry(ctx context.Context, serviceName string) (*sdktrace.TracerPr
 }
 
 func startPodInformer(ctx context.Context, k8s kubernetes.Interface, namespace string, watcher *informer.PodWatcher) {
-	factory := informers.NewSharedInformerFactoryWithOptions(k8s, 30*time.Second, informers.WithNamespace(namespace))
-	informer := factory.Core().V1().Pods().Informer()
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	req, err := labels.NewRequirement(k8sjob.LabelGHJob, selection.Exists, nil)
+	if err != nil {
+		slog.Error("pod informer label selector", "err", err)
+		return
+	}
+	labelSel := labels.NewSelector().Add(*req).String()
+
+	factory := informers.NewSharedInformerFactoryWithOptions(k8s, 30*time.Second,
+		informers.WithNamespace(namespace),
+		informers.WithTweakListOptions(func(opts *metav1.ListOptions) {
+			opts.LabelSelector = labelSel
+		}),
+	)
+	podInformer := factory.Core().V1().Pods().Informer()
+	podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj any) {
+			pod, _ := obj.(*corev1.Pod)
+			watcher.OnAdd(ctx, pod)
+		},
 		UpdateFunc: func(oldObj, newObj any) {
 			oldPod, _ := oldObj.(*corev1.Pod)
 			newPod, _ := newObj.(*corev1.Pod)
@@ -333,7 +371,7 @@ func startPodInformer(ctx context.Context, k8s kubernetes.Interface, namespace s
 	factory.WaitForCacheSync(ctx.Done())
 }
 
-func startLeaderElectedReconciler(ctx context.Context, k8s kubernetes.Interface, cfg appConfig, rec *reconciler.Reconciler) {
+func startLeaderElectedReconciler(ctx context.Context, k8s kubernetes.Interface, cfg appConfig, rec *reconciler.Reconciler, orphan *reconciler.OrphanRunnerSweep) {
 	if len(cfg.Repos) == 0 {
 		slog.Info("reconciler disabled: no GHA_REPOS configured")
 		return
@@ -360,6 +398,20 @@ func startLeaderElectedReconciler(ctx context.Context, k8s kubernetes.Interface,
 			Callbacks: leaderelection.LeaderCallbacks{
 				OnStartedLeading: func(ctx context.Context) {
 					slog.Info("reconciler leader")
+					go func() {
+						ticker := time.NewTicker(cfg.ReconcileInterval)
+						defer ticker.Stop()
+						for {
+							if err := orphan.SweepOnce(ctx); err != nil {
+								slog.Error("orphan runner sweep failed", "err", err)
+							}
+							select {
+							case <-ctx.Done():
+								return
+							case <-ticker.C:
+							}
+						}
+					}()
 					if err := rec.Run(ctx); err != nil && ctx.Err() == nil {
 						slog.Error("reconciler stopped", "err", err)
 					}

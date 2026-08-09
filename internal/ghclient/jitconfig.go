@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,6 +23,15 @@ type Client struct {
 	baseURL    string
 	httpClient *http.Client
 	token      TokenFunc
+	limitsMu   sync.RWMutex
+	limits     RateLimits
+}
+
+// RateLimits holds the last observed GitHub API rate limit headers.
+type RateLimits struct {
+	Limit     int
+	Remaining int
+	Reset     time.Time
 }
 
 // Option configures a Client.
@@ -80,12 +92,12 @@ func (c *Client) GenerateJITConfig(ctx context.Context, owner, repo string, req 
 		return JITConfigResponse{}, err
 	}
 
-	respBody, status, err := c.do(ctx, http.MethodPost, path, body)
+	respBody, status, hdr, err := c.do(ctx, http.MethodPost, path, body)
 	if err != nil {
 		return JITConfigResponse{}, err
 	}
 	if status < 200 || status >= 300 {
-		return JITConfigResponse{}, fmt.Errorf("ghclient: generate-jit-config: status %d: %s", status, string(respBody))
+		return JITConfigResponse{}, parseStatusError(status, string(respBody), hdr)
 	}
 
 	var apiResp jitConfigAPIResponse
@@ -105,12 +117,12 @@ func (c *Client) DeleteRunner(ctx context.Context, owner, repo string, runnerID 
 		return nil
 	}
 	path := fmt.Sprintf("/repos/%s/%s/actions/runners/%d", owner, repo, runnerID)
-	_, status, err := c.do(ctx, http.MethodDelete, path, nil)
+	_, status, hdr, err := c.do(ctx, http.MethodDelete, path, nil)
 	if err != nil {
 		return err
 	}
 	if status < 200 || status >= 300 {
-		return fmt.Errorf("ghclient: delete runner: status %d", status)
+		return parseStatusError(status, "", hdr)
 	}
 	return nil
 }
@@ -142,12 +154,12 @@ func (c *Client) ListRuns(ctx context.Context, owner, repo string, statuses []st
 			q.Set("per_page", "100")
 			q.Set("page", fmt.Sprintf("%d", page))
 			path := fmt.Sprintf("/repos/%s/%s/actions/runs?%s", owner, repo, q.Encode())
-			respBody, code, err := c.do(ctx, http.MethodGet, path, nil)
+			respBody, code, hdr, err := c.do(ctx, http.MethodGet, path, nil)
 			if err != nil {
 				return nil, err
 			}
 			if code < 200 || code >= 300 {
-				return nil, fmt.Errorf("ghclient: list runs status=%s: status %d: %s", status, code, string(respBody))
+				return nil, parseStatusError(code, string(respBody), hdr)
 			}
 			var apiResp workflowRunsResponse
 			if err := json.Unmarshal(respBody, &apiResp); err != nil {
@@ -194,12 +206,12 @@ func (c *Client) ListRunJobs(ctx context.Context, owner, repo string, runID int6
 		q.Set("per_page", "100")
 		q.Set("page", fmt.Sprintf("%d", page))
 		path := fmt.Sprintf("/repos/%s/%s/actions/runs/%d/jobs?%s", owner, repo, runID, q.Encode())
-		respBody, status, err := c.do(ctx, http.MethodGet, path, nil)
+		respBody, status, hdr, err := c.do(ctx, http.MethodGet, path, nil)
 		if err != nil {
 			return nil, err
 		}
 		if status < 200 || status >= 300 {
-			return nil, fmt.Errorf("ghclient: list run jobs: status %d: %s", status, string(respBody))
+			return nil, parseStatusError(status, string(respBody), hdr)
 		}
 		var apiResp workflowJobsResponse
 		if err := json.Unmarshal(respBody, &apiResp); err != nil {
@@ -217,14 +229,14 @@ func (c *Client) ListRunJobs(ctx context.Context, owner, repo string, runID int6
 	return all, nil
 }
 
-func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]byte, int, error) {
+func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]byte, int, http.Header, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		bodyReader = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -234,20 +246,50 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]by
 	if c.token != nil {
 		tok, err := c.token(ctx)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	defer resp.Body.Close()
 
+	c.recordRateLimits(resp.Header)
+
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, resp.StatusCode, err
+		return nil, resp.StatusCode, resp.Header, err
 	}
-	return respBody, resp.StatusCode, nil
+	return respBody, resp.StatusCode, resp.Header, nil
+}
+
+func (c *Client) recordRateLimits(h http.Header) {
+	if h == nil {
+		return
+	}
+	lim, _ := strconv.Atoi(h.Get("X-RateLimit-Limit"))
+	rem, _ := strconv.Atoi(h.Get("X-RateLimit-Remaining"))
+	var reset time.Time
+	if v := h.Get("X-RateLimit-Reset"); v != "" {
+		if sec, err := strconv.ParseInt(v, 10, 64); err == nil {
+			reset = time.Unix(sec, 0)
+		}
+	}
+	if lim == 0 && rem == 0 && reset.IsZero() {
+		return
+	}
+	c.limitsMu.Lock()
+	c.limits = RateLimits{Limit: lim, Remaining: rem, Reset: reset}
+	c.limitsMu.Unlock()
+	slog.Debug("github rate limit", "limit", lim, "remaining", rem, "reset", reset)
+}
+
+// LastRateLimits returns the most recently observed rate limit headers.
+func (c *Client) LastRateLimits() RateLimits {
+	c.limitsMu.RLock()
+	defer c.limitsMu.RUnlock()
+	return c.limits
 }

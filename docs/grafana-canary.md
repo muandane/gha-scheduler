@@ -12,16 +12,22 @@ If empty, check scheduler logs for telemetry errors and confirm OTLP receiver on
 
 ## PromQL (canary go/no-go)
 
-Schedule latency p95 (webhook → pod running):
+Webhook → running p95 (primary SLO):
+
+```promql
+histogram_quantile(0.95, sum(rate(gha_scheduler_webhook_to_running_latency_bucket[5m])) by (le))
+```
+
+Webhook → running p50:
+
+```promql
+histogram_quantile(0.50, sum(rate(gha_scheduler_webhook_to_running_latency_bucket[5m])) by (le))
+```
+
+Schedule latency p95 (Job created → pod running):
 
 ```promql
 histogram_quantile(0.95, sum(rate(gha_scheduler_schedule_latency_bucket[5m])) by (le))
-```
-
-Schedule latency p50:
-
-```promql
-histogram_quantile(0.50, sum(rate(gha_scheduler_schedule_latency_bucket[5m])) by (le))
 ```
 
 Dispatch errors (should be 0):

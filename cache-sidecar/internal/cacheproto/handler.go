@@ -48,12 +48,12 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/twirp/"):
 		h.handleTwirp(w, r)
+	case strings.HasPrefix(r.URL.Path, "/_apis/artifactcache/blobs/"):
+		h.handleBlobDownload(w, r)
 	case strings.HasPrefix(r.URL.Path, "/_apis/artifactcache/"):
 		h.handleV1(w, r)
 	case strings.HasPrefix(r.URL.Path, "/_apis/cache-upload/"):
 		h.handleUpload(w, r)
-	case strings.HasPrefix(r.URL.Path, "/_apis/artifactcache/blobs/"):
-		h.handleBlobDownload(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -98,6 +98,7 @@ func (h *Handler) twirpGetDownloadURL(w http.ResponseWriter, r *http.Request, bo
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "invalid request"})
 		return
 	}
+	h.ensureBaseURL(r)
 	matches, err := h.backend.FindKeys(r.Context(), req.Key, req.Version, req.RestoreKeys)
 	if err != nil || len(matches) == 0 {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "message": "cache miss"})
@@ -171,6 +172,7 @@ func (h *Handler) handleV1(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	h.ensureBaseURL(r)
 	keys := strings.Split(r.URL.Query().Get("keys"), ",")
 	version := r.URL.Query().Get("version")
 	if len(keys) == 0 || keys[0] == "" || version == "" {
@@ -184,11 +186,16 @@ func (h *Handler) handleV1(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	matched := matches[0]
+	var cacheSize int64
+	if rc, size, err := h.backend.Get(r.Context(), matched, version); err == nil {
+		cacheSize = size
+		_ = rc.Close()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"cacheKey":        matched,
 		"cacheVersion":    version,
 		"archiveLocation": h.blobURL(matched, version),
-		"cacheSize":       0,
+		"cacheSize":       cacheSize,
 		"creationTime":    "1970-01-01T00:00:00Z",
 	})
 }
@@ -252,6 +259,14 @@ func (h *Handler) blobURL(key, version string) string {
 }
 
 func (h *Handler) uploadURL(r *http.Request, id string) string {
+	h.ensureBaseURL(r)
+	return fmt.Sprintf("%s/_apis/cache-upload/%s", h.baseURL, id)
+}
+
+func (h *Handler) ensureBaseURL(r *http.Request) {
+	if h.baseURL != "" {
+		return
+	}
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
@@ -261,7 +276,6 @@ func (h *Handler) uploadURL(r *http.Request, id string) string {
 		host = "127.0.0.1"
 	}
 	h.baseURL = fmt.Sprintf("%s://%s", scheme, host)
-	return fmt.Sprintf("%s/_apis/cache-upload/%s", h.baseURL, id)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

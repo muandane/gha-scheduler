@@ -103,46 +103,72 @@ func (s *S3Store) Get(ctx context.Context, objectKey string) (io.ReadCloser, int
 	return resp.Body, resp.ContentLength, nil
 }
 
-// List returns object keys with the given prefix (ListObjectsV2).
+// List returns object keys with the given prefix (ListObjectsV2, paginated).
 func (s *S3Store) List(ctx context.Context, prefix string) ([]string, error) {
+	var all []string
+	var continuation string
+	for {
+		keys, next, err := s.listPage(ctx, prefix, continuation)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, keys...)
+		if next == "" {
+			break
+		}
+		continuation = next
+	}
+	return all, nil
+}
+
+func (s *S3Store) listPage(ctx context.Context, prefix, continuation string) ([]string, string, error) {
 	u, err := url.Parse(s.bucketURL())
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	q := u.Query()
 	q.Set("list-type", "2")
 	q.Set("prefix", prefix)
+	if continuation != "" {
+		q.Set("continuation-token", continuation)
+	}
 	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := s.sign(req, emptyHash); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("s3backend: list status %d: %s", resp.StatusCode, string(b))
+		return nil, "", fmt.Errorf("s3backend: list status %d: %s", resp.StatusCode, string(b))
 	}
 	var parsed listObjectsV2Result
 	if err := xml.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	keys := make([]string, 0, len(parsed.Contents))
 	for _, c := range parsed.Contents {
 		keys = append(keys, c.Key)
 	}
-	return keys, nil
+	next := ""
+	if parsed.IsTruncated && parsed.NextContinuationToken != "" {
+		next = parsed.NextContinuationToken
+	}
+	return keys, next, nil
 }
 
 type listObjectsV2Result struct {
-	Contents []struct {
+	IsTruncated           bool   `xml:"IsTruncated"`
+	NextContinuationToken string `xml:"NextContinuationToken"`
+	Contents              []struct {
 		Key string `xml:"Key"`
 	} `xml:"Contents"`
 }

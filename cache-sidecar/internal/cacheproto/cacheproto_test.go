@@ -47,6 +47,24 @@ func TestV1GetCacheHit(t *testing.T) {
 	if !strings.Contains(loc, "/_apis/artifactcache/blobs/") {
 		t.Fatalf("archiveLocation: %q", loc)
 	}
+
+	blobReq, _ := http.NewRequest(http.MethodGet, loc, nil)
+	blobResp, err := http.DefaultClient.Do(blobReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blobResp.Body.Close()
+	if blobResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(blobResp.Body)
+		t.Fatalf("blob status %d: %s", blobResp.StatusCode, body)
+	}
+	blobBody, err := io.ReadAll(blobResp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(blobBody) != "archive-bytes" {
+		t.Fatalf("blob body: %q", blobBody)
+	}
 }
 
 func TestV1GetCacheMiss(t *testing.T) {

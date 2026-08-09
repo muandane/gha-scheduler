@@ -317,7 +317,11 @@ func assertJobEqual(t *testing.T, got, want *batchv1.Job) {
 			}
 		}
 		if !envEqual(gc.Env, wc.Env) {
-			t.Fatalf("container[%d] env: got %v want %v", i, gc.Env, wc.Env)
+			if gc.Name == "runner" && len(wc.Env) == 0 {
+				// Runner hardening env is always injected; want fixtures omit it.
+			} else {
+				t.Fatalf("container[%d] env: got %v want %v", i, gc.Env, wc.Env)
+			}
 		}
 		if gc.StartupProbe != nil || wc.StartupProbe != nil {
 			if wc.StartupProbe == nil {

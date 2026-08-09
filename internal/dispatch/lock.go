@@ -124,3 +124,16 @@ func holderActive(lease *coordinationv1.Lease, ttl time.Duration, now time.Time)
 func dispatchLockName(jobID string) string {
 	return dispatchLockPrefix + jobID
 }
+
+// IsDispatchLocked reports whether an active dispatch lease exists for jobID.
+func (l *LeaseLocker) IsDispatchLocked(ctx context.Context, jobID string) (bool, error) {
+	name := dispatchLockName(jobID)
+	existing, err := l.client.CoordinationV1().Leases(l.namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("dispatch lock get: %w", err)
+	}
+	return holderActive(existing, l.ttl, time.Now()), nil
+}

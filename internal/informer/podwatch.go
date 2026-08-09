@@ -37,26 +37,42 @@ func (w *PodWatcher) OnUpdate(ctx context.Context, oldPod, newPod *corev1.Pod) {
 	if newPod == nil {
 		return
 	}
-	attrs := podAttrs(newPod)
-	podKey := newPod.Namespace + "/" + newPod.Name
+	w.processPod(ctx, newPod, oldPod)
+}
 
-	if !wasScheduled(oldPod) && isScheduled(newPod) {
+// OnAdd handles pod add events (fast-completing jobs that skip Running updates).
+func (w *PodWatcher) OnAdd(ctx context.Context, pod *corev1.Pod) {
+	if pod == nil {
+		return
+	}
+	w.processPod(ctx, pod, nil)
+}
+
+func (w *PodWatcher) processPod(ctx context.Context, pod, oldPod *corev1.Pod) {
+	attrs := podAttrs(pod)
+	podKey := pod.Namespace + "/" + pod.Name
+
+	if !wasScheduled(oldPod) && isScheduled(pod) {
 		w.emitOnce(podKey, "scheduled", func() {
 			w.emitter.PodScheduled(ctx, attrs)
 		})
 	}
-	if !wasRunning(oldPod) && isRunning(newPod) {
+	if !wasRunning(oldPod) && isRunning(pod) {
+		w.emitOnce(podKey, "running", func() {
+			w.emitter.PodRunning(ctx, attrs)
+		})
+	} else if oldPod == nil && isTerminal(pod) && !wasRunning(pod) {
 		w.emitOnce(podKey, "running", func() {
 			w.emitter.PodRunning(ctx, attrs)
 		})
 	}
-	if shouldReportCacheSidecarFailure(newPod) {
+	if shouldReportCacheSidecarFailure(pod) {
 		w.emitOnce(podKey, "cache_sidecar_failed", func() {
 			w.emitter.CacheSidecarFailed(ctx)
 		})
 	}
-	if !isTerminal(oldPod) && isTerminal(newPod) {
-		attrs["exit_code"] = exitCode(newPod)
+	if !isTerminal(oldPod) && isTerminal(pod) {
+		attrs["exit_code"] = exitCode(pod)
 		w.emitOnce(podKey, "completed", func() {
 			w.emitter.PodCompleted(ctx, attrs)
 		})

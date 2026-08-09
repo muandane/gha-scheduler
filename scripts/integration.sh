@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Live integration dry-run: GH App token → generate-jit-config (no runner registration).
+# Live integration dry-run: GH App token → generate-jit-config (creates transient runner, deleted on exit).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

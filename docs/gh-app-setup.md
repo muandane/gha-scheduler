@@ -55,7 +55,18 @@ Comma-separated list in ConfigMap `GHA_REPOS`:
 GHA_REPOS: "myorg/repo-a,myorg/repo-b"
 ```
 
-Required for missed-webhook backfill (60s poll).
+Required for missed-webhook backfill (60s poll). Set at install time:
+
+```bash
+export GHA_REPOS="myorg/repo-a,myorg/repo-b"
+./deploy/install.sh
+```
+
+`install.sh` renders `GHA_REPOS` into the ConfigMap via `envsubst` (not committed to git).
+
+## Health check route
+
+GitHub does not call `/healthz`; it is for canary scripts and gateway probes. The HTTPRoute exposes both `/webhook` and `/healthz` on `GHA_WEBHOOK_HOSTNAME`.
 
 ## Workflow labels
 

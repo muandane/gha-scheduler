@@ -19,6 +19,12 @@ spec:
       containers:
         - name: scheduler
           image: ghcr.io/muandane/gha-scheduler:latest
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
           ports:
             - name: http
               containerPort: 8080

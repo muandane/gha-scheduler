@@ -63,12 +63,13 @@ type Request struct {
 
 // Dispatcher wires label parsing, GH JIT config, and k8s Job creation.
 type Dispatcher struct {
-	cfg   Config
-	k8s   kubernetes.Interface
-	gh    GHClient
-	lock  JobLocker
-	jobMu *jobMutexRegistry
-	wait  waitFunc
+	cfg     Config
+	k8s     kubernetes.Interface
+	gh      GHClient
+	lock    JobLocker
+	jobMu   *jobMutexRegistry
+	wait    waitFunc
+	backoff *Backoff
 }
 
 // New creates a Dispatcher.
@@ -86,11 +87,12 @@ func New(cfg Config, k8s kubernetes.Interface, gh GHClient) *Dispatcher {
 		cfg.MaxAttempts = defaultMaxAttempts
 	}
 	return &Dispatcher{
-		cfg:   cfg,
-		k8s:   k8s,
-		gh:    gh,
-		lock:  NewLeaseLocker(k8s, cfg.Namespace, cfg.LockIdentity, 0),
-		jobMu: newJobMutexRegistry(),
+		cfg:     cfg,
+		k8s:     k8s,
+		gh:      gh,
+		lock:    NewLeaseLocker(k8s, cfg.Namespace, cfg.LockIdentity, 0),
+		jobMu:   newJobMutexRegistry(),
+		backoff: newBackoff(),
 	}
 }
 
@@ -158,7 +160,8 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req Request) error {
 	secretName := fmt.Sprintf("jit-%s-%s", req.RunID, req.JobID)
 
 	var jit ghclient.JITConfigResponse
-	err = withRetry(ctx, d.cfg.MaxAttempts, d.wait, func() error {
+	retryKey := "jit-" + req.JobID
+	err = withRetry(ctx, d.cfg.MaxAttempts, d.wait, d.backoff, retryKey, func() error {
 		resp, err := d.gh.GenerateJITConfig(ctx, req.Owner, req.Repo, ghclient.JITConfigRequest{
 			Name:   runnerName,
 			Labels: req.Labels,
@@ -187,7 +190,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req Request) error {
 		},
 	}
 
-	err = withRetry(ctx, d.cfg.MaxAttempts, d.wait, func() error {
+	err = withRetry(ctx, d.cfg.MaxAttempts, d.wait, d.backoff, "secret-"+req.JobID, func() error {
 		if _, err := d.k8s.CoreV1().Secrets(d.cfg.Namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
 			return fmt.Errorf("dispatch: create secret: %w", err)
 		}
@@ -225,7 +228,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req Request) error {
 	}, spec)
 
 	var createdJob *batchv1.Job
-	err = withRetry(ctx, d.cfg.MaxAttempts, d.wait, func() error {
+	err = withRetry(ctx, d.cfg.MaxAttempts, d.wait, d.backoff, "job-"+req.JobID, func() error {
 		j, err := d.k8s.BatchV1().Jobs(d.cfg.Namespace).Create(ctx, job, metav1.CreateOptions{})
 		if err != nil {
 			return fmt.Errorf("dispatch: create job: %w", err)
@@ -254,8 +257,15 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req Request) error {
 			UID:        createdJob.UID,
 		},
 	}
-	if _, err := d.k8s.CoreV1().Secrets(d.cfg.Namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
-		return fmt.Errorf("dispatch: patch secret owner ref: %w", err)
+	patchErr := withRetry(ctx, d.cfg.MaxAttempts, d.wait, d.backoff, "ownerref-"+req.JobID, func() error {
+		if _, err := d.k8s.CoreV1().Secrets(d.cfg.Namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("dispatch: patch secret owner ref: %w", err)
+		}
+		return nil
+	})
+	if patchErr != nil {
+		_ = d.k8s.CoreV1().Secrets(d.cfg.Namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
+		return patchErr
 	}
 
 	return nil

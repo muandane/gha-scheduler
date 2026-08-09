@@ -7,6 +7,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/muandane/gha-scheduler/internal/dispatch"
 	"github.com/muandane/gha-scheduler/internal/labelquery"
 )
 
@@ -55,12 +56,27 @@ func (s *SpanEmitter) WebhookReceived(ctx context.Context, attrs map[string]stri
 func (s *SpanEmitter) DispatchStarted(ctx context.Context, jobID string, spec labelquery.RunnerSpec, repo string) {
 	s.registry.MarkDispatch(jobID)
 	attrs := specAttrs(spec, repo)
+	if src, ok := s.registry.Source(jobID); ok {
+		attrs["dispatch_source"] = src
+	}
 	jobCtx, ok := s.registry.JobCtx(jobID)
 	if !ok {
 		s.emit(ctx, "job.dispatch", attrs, false)
 		return
 	}
 	s.emitChild(jobCtx, "job.dispatch", attrs, false)
+}
+
+// ReconcileDispatch starts a trace for reconciler-driven dispatch.
+func (s *SpanEmitter) ReconcileDispatch(ctx context.Context, req dispatch.Request) {
+	if req.JobID == "" {
+		return
+	}
+	s.registry.StartJobFromReconcile(ctx, req.JobID, map[string]string{
+		"repo":   req.Owner + "/" + req.Repo,
+		"run_id": req.RunID,
+		"job_id": req.JobID,
+	})
 }
 
 // JobCreated marks Job creation for dispatch latency metrics.

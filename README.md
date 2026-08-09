@@ -65,7 +65,6 @@ Details: [deploy/CANARY.md](deploy/CANARY.md), [docs/grafana-canary.md](docs/gra
 | [docs/gh-app-setup.md](docs/gh-app-setup.md) | GitHub App, secrets, cutover |
 | [docs/ci.md](docs/ci.md) | CI/CD and image publishing |
 | [deploy/CANARY.md](deploy/CANARY.md) | Rollout checklist |
-| [docs/arc-baseline.md](docs/arc-baseline.md) | Pre-cutover ARC metrics |
 
 ## License
 

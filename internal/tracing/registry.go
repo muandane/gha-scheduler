@@ -12,10 +12,12 @@ import (
 type jobTrace struct {
 	ctx        context.Context
 	root       trace.Span
+	source     string
 	webhookAt  time.Time
 	dispatchAt time.Time
 	jobCreated time.Time
 	runningAt  time.Time
+	startedAt  time.Time
 }
 
 // JobTraceRegistry links all spans for one GH job under a single trace.
@@ -46,9 +48,65 @@ func (r *JobTraceRegistry) StartJob(ctx context.Context, jobID string, attrs map
 	r.jobs[jobID] = &jobTrace{
 		ctx:       childCtx,
 		root:      root,
+		source:    "webhook",
 		webhookAt: time.Now(),
+		startedAt: time.Now(),
 	}
 	return childCtx
+}
+
+// StartJobFromReconcile opens a root span for reconciler-driven dispatch.
+func (r *JobTraceRegistry) StartJobFromReconcile(ctx context.Context, jobID string, attrs map[string]string) context.Context {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if existing, ok := r.jobs[jobID]; ok {
+		return existing.ctx
+	}
+
+	childCtx, root := r.tracer.Start(ctx, "job.reconciler_dispatch", withStringAttrs(attrs))
+	now := time.Now()
+	r.jobs[jobID] = &jobTrace{
+		ctx:        childCtx,
+		root:       root,
+		source:     "reconciler",
+		dispatchAt: now,
+		webhookAt:  now,
+		startedAt:  now,
+	}
+	return childCtx
+}
+
+// RunEviction removes traces older than ttl that were never ended.
+func (r *JobTraceRegistry) RunEviction(ctx context.Context, ttl, interval time.Duration) {
+	if ttl == 0 {
+		ttl = time.Hour
+	}
+	if interval == 0 {
+		interval = 5 * time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.evictStale(ttl)
+		}
+	}
+}
+
+func (r *JobTraceRegistry) evictStale(ttl time.Duration) {
+	now := time.Now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for jobID, jt := range r.jobs {
+		if now.Sub(jt.startedAt) > ttl {
+			jt.root.End()
+			delete(r.jobs, jobID)
+		}
+	}
 }
 
 // JobCtx returns the active trace context for jobID.
@@ -60,6 +118,17 @@ func (r *JobTraceRegistry) JobCtx(jobID string) (context.Context, bool) {
 		return nil, false
 	}
 	return jt.ctx, true
+}
+
+// Source returns the dispatch source for a job trace (webhook or reconciler).
+func (r *JobTraceRegistry) Source(jobID string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	jt, ok := r.jobs[jobID]
+	if !ok {
+		return "", false
+	}
+	return jt.source, true
 }
 
 // MarkDispatch records dispatch start time for latency metrics.

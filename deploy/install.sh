@@ -7,6 +7,7 @@ MANIFESTS="${ROOT}/manifests"
 export KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/nuc-k3s.yaml}"
 
 : "${GHA_WEBHOOK_HOSTNAME:?set GHA_WEBHOOK_HOSTNAME e.g. gha-scheduler.example.com}"
+: "${GHA_REPOS:?set GHA_REPOS e.g. org/repo1,org/repo2}"
 
 log() { printf '==> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -14,6 +15,15 @@ die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 require_gateway() {
   kubectl -n gateway get gateway ts-gateway >/dev/null 2>&1 || \
     die "ts-gateway not found — run cluster/kubernetes/private/install.sh gateway-stack first"
+}
+
+apply_configmap() {
+  local tmp
+  tmp="$(mktemp)"
+  export GHA_REPOS
+  envsubst '${GHA_REPOS}' < "${MANIFESTS}/configmap.yaml" > "${tmp}"
+  kubectl apply -f "${tmp}"
+  rm -f "${tmp}"
 }
 
 apply_manifest() {
@@ -79,7 +89,7 @@ install_seaweedfs
 log "Applying gha-scheduler manifests"
 apply_manifest "${MANIFESTS}/serviceaccount.yaml"
 apply_manifest "${MANIFESTS}/rbac.yaml"
-apply_manifest "${MANIFESTS}/configmap.yaml"
+apply_configmap
 
 if kubectl -n gha-runners get secret gha-scheduler-secrets >/dev/null 2>&1; then
   log "Using existing secret gha-scheduler-secrets"

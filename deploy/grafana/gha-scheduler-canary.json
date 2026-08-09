@@ -7,8 +7,19 @@
   "panels": [
     {
       "type": "timeseries",
-      "title": "Schedule latency p95 (s)",
+      "title": "Webhook → running p95 (s)",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(gha_scheduler_webhook_to_running_latency_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Schedule latency p95 (s)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum(rate(gha_scheduler_schedule_latency_bucket[5m])) by (le))",
@@ -19,7 +30,7 @@
     {
       "type": "timeseries",
       "title": "Dispatch latency p95 (s)",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum(rate(gha_scheduler_dispatch_latency_bucket[5m])) by (le))",
@@ -30,7 +41,7 @@
     {
       "type": "timeseries",
       "title": "Dispatch errors / min",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "targets": [
         {
           "expr": "sum(rate(gha_scheduler_dispatch_errors_total[5m])) by (reason)",
@@ -41,7 +52,7 @@
     {
       "type": "timeseries",
       "title": "Cache sidecar failures / min",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
       "targets": [
         {
           "expr": "sum(rate(gha_scheduler_cache_sidecar_failures_total[5m]))",

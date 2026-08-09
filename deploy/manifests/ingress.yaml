@@ -20,3 +20,10 @@ spec:
       backendRefs:
         - name: gha-scheduler
           port: 8080
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /healthz
+      backendRefs:
+        - name: gha-scheduler
+          port: 8080

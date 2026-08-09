@@ -15,11 +15,15 @@ const attrReason = "reason"
 
 // Metrics holds OTel instruments per SPEC §5.
 type Metrics struct {
-	dispatchLatency      metric.Float64Histogram
-	scheduleLatency      metric.Float64Histogram
-	jobDuration          metric.Float64Histogram
-	dispatchErrors       metric.Int64Counter
-	cacheSidecarFailures metric.Int64Counter
+	dispatchLatency         metric.Float64Histogram
+	scheduleLatency         metric.Float64Histogram
+	webhookToRunningLatency metric.Float64Histogram
+	jobDuration             metric.Float64Histogram
+	dispatchErrors          metric.Int64Counter
+	cacheSidecarFailures    metric.Int64Counter
+	webhooksTotal           metric.Int64Counter
+	orphanRunnersDeleted    metric.Int64Counter
+	orphanRunnersSkipped    metric.Int64Counter
 }
 
 // NewMetrics registers instruments on the given meter.
@@ -33,6 +37,13 @@ func NewMetrics(m metric.Meter) (*Metrics, error) {
 	}
 	scheduleLatency, err := m.Float64Histogram("gha_scheduler.schedule_latency",
 		metric.WithDescription("Seconds from k8s Job created to pod running"),
+		metric.WithUnit("s"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	webhookToRunningLatency, err := m.Float64Histogram("gha_scheduler.webhook_to_running_latency",
+		metric.WithDescription("Seconds from webhook received to pod running"),
 		metric.WithUnit("s"),
 	)
 	if err != nil {
@@ -57,12 +68,34 @@ func NewMetrics(m metric.Meter) (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	webhooksTotal, err := m.Int64Counter("gha_scheduler.webhooks_total",
+		metric.WithDescription("Webhook deliveries by validity"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	orphanRunnersDeleted, err := m.Int64Counter("gha_scheduler.orphan_runners_deleted_total",
+		metric.WithDescription("Orphan GitHub runners deleted"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	orphanRunnersSkipped, err := m.Int64Counter("gha_scheduler.orphan_runners_skipped_total",
+		metric.WithDescription("Orphan runner sweep skips by reason"),
+	)
+	if err != nil {
+		return nil, err
+	}
 	return &Metrics{
-		dispatchLatency:      dispatchLatency,
-		scheduleLatency:      scheduleLatency,
-		jobDuration:          jobDuration,
-		dispatchErrors:       dispatchErrors,
-		cacheSidecarFailures: cacheSidecarFailures,
+		dispatchLatency:         dispatchLatency,
+		scheduleLatency:         scheduleLatency,
+		webhookToRunningLatency: webhookToRunningLatency,
+		jobDuration:             jobDuration,
+		dispatchErrors:          dispatchErrors,
+		cacheSidecarFailures:    cacheSidecarFailures,
+		webhooksTotal:           webhooksTotal,
+		orphanRunnersDeleted:    orphanRunnersDeleted,
+		orphanRunnersSkipped:    orphanRunnersSkipped,
 	}, nil
 }
 
@@ -80,6 +113,41 @@ func (m *Metrics) RecordScheduleLatency(ctx context.Context, seconds float64) {
 		return
 	}
 	m.scheduleLatency.Record(ctx, seconds)
+}
+
+// RecordWebhookToRunningLatency records webhook → pod running duration.
+func (m *Metrics) RecordWebhookToRunningLatency(ctx context.Context, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.webhookToRunningLatency.Record(ctx, seconds)
+}
+
+// RecordWebhook records webhook delivery validity.
+func (m *Metrics) RecordWebhook(ctx context.Context, valid bool, reason string) {
+	if m == nil {
+		return
+	}
+	m.webhooksTotal.Add(ctx, 1, metric.WithAttributes(
+		attribute.Bool("valid", valid),
+		attribute.String(attrReason, reason),
+	))
+}
+
+// RecordOrphanRunnerDeleted increments orphan runner deletions.
+func (m *Metrics) RecordOrphanRunnerDeleted(ctx context.Context) {
+	if m == nil {
+		return
+	}
+	m.orphanRunnersDeleted.Add(ctx, 1)
+}
+
+// RecordOrphanRunnerSkipped increments orphan runner skips.
+func (m *Metrics) RecordOrphanRunnerSkipped(ctx context.Context, reason string) {
+	if m == nil {
+		return
+	}
+	m.orphanRunnersSkipped.Add(ctx, 1, metric.WithAttributes(attribute.String(attrReason, reason)))
 }
 
 // RecordJobDuration records pod running → completed duration.
@@ -122,6 +190,9 @@ func (m *Metrics) RecordTimingsFromRegistry(ctx context.Context, reg *JobTraceRe
 	case lifecyclePodRunning:
 		if !jobCreated.IsZero() && !running.IsZero() {
 			m.RecordScheduleLatency(ctx, running.Sub(jobCreated).Seconds())
+		}
+		if !webhook.IsZero() && !running.IsZero() {
+			m.RecordWebhookToRunningLatency(ctx, running.Sub(webhook).Seconds())
 		}
 	case lifecyclePodCompleted:
 		if !running.IsZero() {

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,11 +30,14 @@ type Dispatcher interface {
 
 // Config configures the reconciler.
 type Config struct {
-	Namespace      string
-	Repos          []string
-	Interval       time.Duration
-	StaleThreshold time.Duration
-	LabelDefaults  dispatch.LabelDefaults
+	Namespace        string
+	Repos            []string
+	Interval         time.Duration
+	StaleThreshold   time.Duration
+	MaxJobsPerCycle  int
+	JobCheckCooldown time.Duration
+	LabelDefaults    dispatch.LabelDefaults
+	OnBeforeDispatch func(ctx context.Context, req dispatch.Request)
 }
 
 // Reconciler polls GitHub for stale queued jobs without matching k8s Jobs.
@@ -43,6 +47,9 @@ type Reconciler struct {
 	d   Dispatcher
 	k8s kubernetes.Interface
 	log *slog.Logger
+
+	mu          sync.Mutex
+	lastChecked map[string]time.Time
 }
 
 // New creates a Reconciler.
@@ -53,12 +60,19 @@ func New(cfg Config, gh GHClient, d Dispatcher, k8s kubernetes.Interface) *Recon
 	if cfg.StaleThreshold == 0 {
 		cfg.StaleThreshold = 30 * time.Second
 	}
+	if cfg.MaxJobsPerCycle == 0 {
+		cfg.MaxJobsPerCycle = 5
+	}
+	if cfg.JobCheckCooldown == 0 {
+		cfg.JobCheckCooldown = 5 * time.Minute
+	}
 	return &Reconciler{
-		cfg: cfg,
-		gh:  gh,
-		d:   d,
-		k8s: k8s,
-		log: slog.Default(),
+		cfg:         cfg,
+		gh:          gh,
+		d:           d,
+		k8s:         k8s,
+		log:         slog.Default(),
+		lastChecked: make(map[string]time.Time),
 	}
 }
 
@@ -92,7 +106,7 @@ func (r *Reconciler) reconcile(ctx context.Context) error {
 			continue
 		}
 		if err := r.reconcileRepo(ctx, owner, repo); err != nil {
-			return err
+			r.log.Error("reconcile repo failed", "owner", owner, "repo", repo, "err", err)
 		}
 	}
 	return nil
@@ -105,12 +119,20 @@ func (r *Reconciler) reconcileRepo(ctx context.Context, owner, repo string) erro
 	}
 
 	now := time.Now()
+	dispatched := 0
 	for _, run := range runs {
+		if dispatched >= r.cfg.MaxJobsPerCycle {
+			break
+		}
 		jobs, err := r.gh.ListRunJobs(ctx, owner, repo, run.ID)
 		if err != nil {
-			return fmt.Errorf("reconciler: list jobs run %d: %w", run.ID, err)
+			r.log.Error("reconcile list jobs failed", "run_id", run.ID, "err", err)
+			continue
 		}
 		for _, job := range jobs {
+			if dispatched >= r.cfg.MaxJobsPerCycle {
+				break
+			}
 			if job.Status != "queued" {
 				continue
 			}
@@ -118,11 +140,16 @@ func (r *Reconciler) reconcileRepo(ctx context.Context, owner, repo string) erro
 				continue
 			}
 			jobID := formatID(job.ID)
+			if r.recentlyChecked(jobID, now) {
+				continue
+			}
 			dup, err := r.hasJob(ctx, jobID)
 			if err != nil {
-				return err
+				r.log.Error("reconcile list k8s jobs failed", "job_id", jobID, "err", err)
+				continue
 			}
 			if dup {
+				r.markChecked(jobID, now)
 				continue
 			}
 			req := dispatch.Request{
@@ -133,12 +160,31 @@ func (r *Reconciler) reconcileRepo(ctx context.Context, owner, repo string) erro
 				Labels:        job.Labels,
 				LabelDefaults: r.cfg.LabelDefaults,
 			}
+			if r.cfg.OnBeforeDispatch != nil {
+				r.cfg.OnBeforeDispatch(ctx, req)
+			}
 			if err := r.d.Dispatch(ctx, req); err != nil {
 				r.log.Error("reconcile dispatch failed", "owner", owner, "repo", repo, "job_id", jobID, "err", err)
+			} else {
+				dispatched++
 			}
+			r.markChecked(jobID, now)
 		}
 	}
 	return nil
+}
+
+func (r *Reconciler) recentlyChecked(jobID string, now time.Time) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.lastChecked[jobID]
+	return ok && now.Sub(t) < r.cfg.JobCheckCooldown
+}
+
+func (r *Reconciler) markChecked(jobID string, now time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastChecked[jobID] = now
 }
 
 func (r *Reconciler) hasJob(ctx context.Context, jobID string) (bool, error) {

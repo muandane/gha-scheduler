@@ -18,7 +18,7 @@ data:
   GHA_CACHE_IMAGE: "ghcr.io/muandane/gha-cache-sidecar:latest"
   GHA_SPOT_TOLERATION_KEY: "spot"
   GHA_SPOT_TOLERATION_VALUE: "true"
-  GHA_REPOS: "org/repo"
+  GHA_REPOS: "${GHA_REPOS}"
   GHA_CACHE_BACKEND: "s3"
   GHA_S3_ENDPOINT: "http://seaweedfs-s3.gha-runners.svc:8333"
   GHA_S3_BUCKET: "gha-cache"

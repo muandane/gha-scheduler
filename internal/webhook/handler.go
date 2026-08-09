@@ -11,13 +11,21 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/muandane/gha-scheduler/internal/dispatch"
 )
 
+const maxWebhookBodyBytes = 1 << 20 // 1 MiB
+
 // Dispatcher handles queued workflow jobs.
 type Dispatcher interface {
 	Dispatch(ctx context.Context, req dispatch.Request) error
+}
+
+// MetricsRecorder records webhook validity counters.
+type MetricsRecorder interface {
+	RecordWebhook(ctx context.Context, valid bool, reason string)
 }
 
 // Config configures the webhook handler.
@@ -25,6 +33,7 @@ type Config struct {
 	Secret        string
 	LabelDefaults dispatch.LabelDefaults
 	OnQueued      func(context.Context, dispatch.Request)
+	Metrics       MetricsRecorder
 }
 
 // Handler verifies GitHub webhooks and dispatches queued jobs asynchronously.
@@ -32,6 +41,7 @@ type Handler struct {
 	cfg Config
 	d   Dispatcher
 	log *slog.Logger
+	wg  sync.WaitGroup
 }
 
 // New creates a webhook Handler.
@@ -41,6 +51,11 @@ func New(cfg Config, d Dispatcher) *Handler {
 		d:   d,
 		log: slog.Default(),
 	}
+}
+
+// Wait blocks until in-flight dispatches complete.
+func (h *Handler) Wait() {
+	h.wg.Wait()
 }
 
 type workflowJobEvent struct {
@@ -66,17 +81,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWebhookBodyBytes))
 	if err != nil {
+		h.recordWebhook(r.Context(), false, "body_read")
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 
 	sig := r.Header.Get("X-Hub-Signature-256")
 	if !verifySignature(h.cfg.Secret, body, sig) {
+		h.recordWebhook(r.Context(), false, "signature")
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	h.recordWebhook(r.Context(), true, "ok")
 
 	event := r.Header.Get("X-GitHub-Event")
 	switch event {
@@ -87,6 +106,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) recordWebhook(ctx context.Context, valid bool, reason string) {
+	if h.cfg.Metrics != nil {
+		h.cfg.Metrics.RecordWebhook(ctx, valid, reason)
+	}
 }
 
 func (h *Handler) handleWorkflowJob(body []byte) {
@@ -117,7 +142,9 @@ func (h *Handler) handleWorkflowJob(body []byte) {
 		if h.cfg.OnQueued != nil {
 			h.cfg.OnQueued(context.Background(), req)
 		}
+		h.wg.Add(1)
 		go func() {
+			defer h.wg.Done()
 			if err := h.d.Dispatch(context.Background(), req); err != nil {
 				h.log.Error("dispatch failed", "err", err, "job_id", req.JobID, "labels", req.Labels)
 			}
