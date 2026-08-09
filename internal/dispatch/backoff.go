@@ -49,10 +49,7 @@ func (b *Backoff) delayFor(key string) time.Duration {
 	entry.mux.Lock()
 	defer entry.mux.Unlock()
 	d := entry.backoff
-	entry.backoff = time.Duration(float64(entry.backoff) * b.cfg.Multiplier)
-	if entry.backoff > b.cfg.Max {
-		entry.backoff = b.cfg.Max
-	}
+	entry.backoff = min(time.Duration(float64(entry.backoff)*b.cfg.Multiplier), b.cfg.Max)
 	return b.jitter(d)
 }
 

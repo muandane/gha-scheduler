@@ -142,13 +142,11 @@ func (h *Handler) handleWorkflowJob(body []byte) {
 		if h.cfg.OnQueued != nil {
 			h.cfg.OnQueued(context.Background(), req)
 		}
-		h.wg.Add(1)
-		go func() {
-			defer h.wg.Done()
+		h.wg.Go(func() {
 			if err := h.d.Dispatch(context.Background(), req); err != nil {
 				h.log.Error("dispatch failed", "err", err, "job_id", req.JobID, "labels", req.Labels)
 			}
-		}()
+		})
 	case "completed":
 		h.log.Info("workflow_job completed", "job_id", evt.Job.ID)
 	default:
