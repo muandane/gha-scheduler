@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gha-scheduler
+  namespace: gha-runners
+data:
+  GHA_NAMESPACE: "gha-runners"
+  GHA_LISTEN_ADDR: ":8080"
+  GHA_DEFAULT_CPU: "2"
+  GHA_DEFAULT_ARCH: "x64"
+  GHA_MEM_PER_CPU: "2Gi"
+  GHA_CACHE_PORT: "8080"
+  GHA_ARCH_NODE_LABEL: "kubernetes.io/arch"
+  GHA_POOL_NODE_LABEL: "pool"
+  GHA_RECONCILE_INTERVAL: "60s"
+  GHA_STALE_THRESHOLD: "30s"
+  GHA_RUNNER_IMAGE: "ghcr.io/actions/actions-runner:2.317.0"
+  GHA_CACHE_IMAGE: "ghcr.io/muandane/gha-cache-sidecar:latest"
+  GHA_SPOT_TOLERATION_KEY: "spot"
+  GHA_SPOT_TOLERATION_VALUE: "true"
+  GHA_REPOS: "org/repo"
+  GHA_CACHE_BACKEND: "s3"
+  GHA_S3_ENDPOINT: "http://seaweedfs-s3.gha-runners.svc:8333"
+  GHA_S3_BUCKET: "gha-cache"
+  GHA_S3_REGION: "us-east-1"
+  GHA_S3_SECRET_NAME: "gha-cache-s3-credentials"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc:4318"
