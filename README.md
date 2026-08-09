@@ -11,6 +11,7 @@ ARC replacement: no CRDs, no listener pods, no scale-set controller.
 3. It creates a JIT `Secret` and a `batch/v1` Job (runner + optional cache sidecar).
 4. A 60s reconciler picks up missed webhooks. Leader election runs the reconciler on one replica only.
 5. A pod informer emits OpenTelemetry spans and metrics.
+6. Optional: SQLite job store + embedded console UI at `/` (see [docs/console.md](docs/console.md)).
 
 ## Workflow labels
 
@@ -35,7 +36,7 @@ Published by GitHub Actions to:
 ## Local development
 
 ```bash
-make test
+make test    # runs web-build then go test
 make build
 go test -count=1 -race ./scripts/smoke/ -run TestSmokeWebhookCreatesJobAndSecret -v
 ```
@@ -56,7 +57,7 @@ export GHA_S3_ACCESS_KEY=... GHA_S3_SECRET_KEY=...
 ./scripts/canary-check.sh
 ```
 
-Details: [deploy/CANARY.md](deploy/CANARY.md), [docs/grafana-canary.md](docs/grafana-canary.md).
+Details: [deploy/CANARY.md](deploy/CANARY.md), [docs/console.md](docs/console.md), [docs/grafana-canary.md](docs/grafana-canary.md).
 
 ## Docs
 
@@ -64,6 +65,7 @@ Details: [deploy/CANARY.md](deploy/CANARY.md), [docs/grafana-canary.md](docs/gra
 |-----|---------|
 | [docs/gh-app-setup.md](docs/gh-app-setup.md) | GitHub App, secrets, cutover |
 | [docs/ci.md](docs/ci.md) | CI/CD and image publishing |
+| [docs/console.md](docs/console.md) | Built-in job console (SQLite + embedded UI) |
 | [deploy/CANARY.md](deploy/CANARY.md) | Rollout checklist |
 
 ## License

@@ -25,3 +25,8 @@ data:
   GHA_S3_REGION: "us-east-1"
   GHA_S3_SECRET_NAME: "gha-cache-s3-credentials"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc:4318"
+  GHA_JOB_STORE_ENABLED: "true"
+  GHA_JOB_STORE_PATH: "/data/jobs.db"
+  GHA_JOB_STORE_RETENTION_DAYS: "30"
+  GHA_JOB_STORE_PRUNE_INTERVAL: "6h"
+  GHA_CONSOLE_ENABLED: "true"

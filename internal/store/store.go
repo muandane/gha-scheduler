@@ -59,7 +59,7 @@ type Job struct {
 // TimelinePhase is one step in a job detail response.
 type TimelinePhase struct {
 	Name string    `json:"name"`
-	At   time.Time `json:"at,omitempty"`
+	At   time.Time `json:"at"`
 }
 
 // ListQuery filters job list results.
@@ -78,13 +78,13 @@ type ListResult struct {
 
 // Stats holds operational aggregates for the console header.
 type Stats struct {
-	DispatchP50        float64 `json:"dispatch_p50"`
-	DispatchP95        float64 `json:"dispatch_p95"`
-	ScheduleP50        float64 `json:"schedule_p50"`
-	ScheduleP95        float64 `json:"schedule_p95"`
-	DispatchErrors24h  int64   `json:"dispatch_errors_24h"`
-	ActiveJobs         int64   `json:"active_jobs"`
-	CompletedJobs      int64   `json:"completed_jobs"`
+	DispatchP50       float64 `json:"dispatch_p50"`
+	DispatchP95       float64 `json:"dispatch_p95"`
+	ScheduleP50       float64 `json:"schedule_p50"`
+	ScheduleP95       float64 `json:"schedule_p95"`
+	DispatchErrors24h int64   `json:"dispatch_errors_24h"`
+	ActiveJobs        int64   `json:"active_jobs"`
+	CompletedJobs     int64   `json:"completed_jobs"`
 }
 
 // JobStore persists scheduler job lifecycle data.

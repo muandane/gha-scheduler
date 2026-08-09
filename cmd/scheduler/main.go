@@ -31,6 +31,8 @@ import (
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 
+	"github.com/muandane/gha-scheduler/internal/api"
+	"github.com/muandane/gha-scheduler/internal/console"
 	"github.com/muandane/gha-scheduler/internal/dispatch"
 	"github.com/muandane/gha-scheduler/internal/ghapp"
 	"github.com/muandane/gha-scheduler/internal/ghclient"
@@ -38,6 +40,8 @@ import (
 	"github.com/muandane/gha-scheduler/internal/k8sjob"
 	"github.com/muandane/gha-scheduler/internal/labelquery"
 	"github.com/muandane/gha-scheduler/internal/reconciler"
+	"github.com/muandane/gha-scheduler/internal/store"
+	sqlitestore "github.com/muandane/gha-scheduler/internal/store/sqlite"
 	"github.com/muandane/gha-scheduler/internal/tracing"
 	"github.com/muandane/gha-scheduler/internal/webhook"
 )
@@ -84,6 +88,22 @@ func main() {
 		os.Exit(1)
 	}
 	spanEmitter := tracing.NewSpanEmitter(tracer, nil, jobMetrics)
+	var jobStore store.JobStore
+	if cfg.JobStoreEnabled {
+		st, err := sqlitestore.Open(cfg.JobStorePath)
+		if err != nil {
+			slog.Error("job store", "err", err)
+			os.Exit(1)
+		}
+		defer func() { _ = st.Close() }()
+		jobStore = st
+	}
+	var emitter tracing.Emitter = spanEmitter
+	var storeEmitter *tracing.StoreEmitter
+	if jobStore != nil {
+		storeEmitter = tracing.NewStoreEmitter(spanEmitter, jobStore)
+		emitter = storeEmitter
+	}
 
 	labelDefaults := dispatch.LabelDefaults{CPU: cfg.DefaultCPU, Arch: cfg.DefaultArch}
 	jobLock := dispatch.NewLeaseLocker(k8s, cfg.Namespace, cfg.LockIdentity, 0)
@@ -107,13 +127,16 @@ func main() {
 			slog.Warn("unknown label key", "key", key, "value", value)
 		},
 		OnParsed: func(ctx context.Context, req dispatch.Request, spec labelquery.RunnerSpec) {
-			spanEmitter.DispatchStarted(ctx, req.JobID, spec, req.Owner+"/"+req.Repo)
+			emitter.DispatchStarted(ctx, req.JobID, spec, req.Owner+"/"+req.Repo)
 		},
 		OnJobCreated: func(jobID string) {
-			spanEmitter.JobCreated(jobID)
+			emitter.JobCreated(jobID)
 		},
 		OnError: func(ctx context.Context, req dispatch.Request, reason string) {
 			jobMetrics.RecordDispatchError(ctx, reason)
+			if storeEmitter != nil {
+				storeEmitter.RecordDispatchError(ctx, req, reason)
+			}
 		},
 	}, k8s, gh)
 	dispatcher.SetLocker(jobLock)
@@ -125,7 +148,7 @@ func main() {
 		LabelDefaults: labelDefaults,
 		Metrics:       jobMetrics,
 		OnQueued: func(ctx context.Context, req dispatch.Request) {
-			spanEmitter.WebhookReceived(ctx, map[string]string{
+			emitter.WebhookReceived(ctx, map[string]string{
 				"repo":   req.Owner + "/" + req.Repo,
 				"run_id": req.RunID,
 				"job_id": req.JobID,
@@ -138,6 +161,19 @@ func main() {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	if jobStore != nil {
+		apiHandler := api.NewHandler(jobStore, cfg.ConsoleToken)
+		mux.Handle("/api/v1/", apiHandler)
+	}
+	if cfg.ConsoleEnabled && jobStore != nil {
+		if fsys, err := console.Dist(); err != nil {
+			slog.Error("console embed", "err", err)
+			os.Exit(1)
+		} else {
+			spa := console.NewSPA(fsys, "")
+			mux.Handle("/", authWrap(cfg.ConsoleToken, spa))
+		}
+	}
 
 	srv := &http.Server{Addr: cfg.ListenAddr, Handler: mux}
 	go func() {
@@ -148,7 +184,12 @@ func main() {
 		}
 	}()
 
-	podWatcher := informer.NewPodWatcher(spanEmitter)
+	var lifecycle informer.LifecycleEmitter = spanEmitter
+	if storeEmitter != nil {
+		lifecycle = storeEmitter
+	}
+
+	podWatcher := informer.NewPodWatcher(lifecycle)
 	startPodInformer(ctx, k8s, cfg.Namespace, podWatcher)
 
 	rec := reconciler.New(reconciler.Config{
@@ -158,7 +199,11 @@ func main() {
 		StaleThreshold: cfg.StaleThreshold,
 		LabelDefaults:  labelDefaults,
 		OnBeforeDispatch: func(ctx context.Context, req dispatch.Request) {
-			spanEmitter.ReconcileDispatch(ctx, req)
+			if storeEmitter != nil {
+				storeEmitter.ReconcileDispatch(ctx, req)
+			} else {
+				spanEmitter.ReconcileDispatch(ctx, req)
+			}
 		},
 	}, gh, dispatcher, k8s)
 
@@ -169,7 +214,7 @@ func main() {
 		Metrics:   jobMetrics,
 	}, gh, k8s, jobLock)
 
-	startLeaderElectedReconciler(ctx, k8s, cfg, rec, orphanSweep)
+	startLeaderElectedTasks(ctx, k8s, cfg, rec, orphanSweep, jobStore)
 
 	<-ctx.Done()
 	wh.Wait()
@@ -208,6 +253,12 @@ type appConfig struct {
 	SpotTolerationValue string
 	LockIdentity        string
 	OrphanRunnerGrace   time.Duration
+	JobStoreEnabled     bool
+	JobStorePath        string
+	JobStoreRetention   int
+	JobStorePruneEvery  time.Duration
+	ConsoleEnabled      bool
+	ConsoleToken        string
 }
 
 func loadConfig() (appConfig, error) {
@@ -248,6 +299,16 @@ func loadConfig() (appConfig, error) {
 	cfg.SpotTolerationValue = env("GHA_SPOT_TOLERATION_VALUE", "true")
 	cfg.LockIdentity = fmt.Sprintf("%s-%d", hostname(), os.Getpid())
 	cfg.OrphanRunnerGrace = envDuration("GHA_ORPHAN_RUNNER_GRACE", 2*time.Minute)
+	cfg.JobStoreEnabled = envBool("GHA_JOB_STORE_ENABLED", false)
+	cfg.JobStorePath = env("GHA_JOB_STORE_PATH", "/data/jobs.db")
+	cfg.JobStoreRetention = envInt("GHA_JOB_STORE_RETENTION_DAYS", 30)
+	cfg.JobStorePruneEvery = envDuration("GHA_JOB_STORE_PRUNE_INTERVAL", 6*time.Hour)
+	cfg.ConsoleEnabled = envBool("GHA_CONSOLE_ENABLED", false)
+	cfg.ConsoleToken = os.Getenv("GHA_CONSOLE_TOKEN")
+
+	if cfg.ConsoleEnabled && !cfg.JobStoreEnabled {
+		return cfg, fmt.Errorf("GHA_CONSOLE_ENABLED requires GHA_JOB_STORE_ENABLED")
+	}
 
 	if cfg.WebhookSecret == "" {
 		return cfg, fmt.Errorf("GHA_WEBHOOK_SECRET is required")
@@ -371,9 +432,13 @@ func startPodInformer(ctx context.Context, k8s kubernetes.Interface, namespace s
 	factory.WaitForCacheSync(ctx.Done())
 }
 
-func startLeaderElectedReconciler(ctx context.Context, k8s kubernetes.Interface, cfg appConfig, rec *reconciler.Reconciler, orphan *reconciler.OrphanRunnerSweep) {
-	if len(cfg.Repos) == 0 {
-		slog.Info("reconciler disabled: no GHA_REPOS configured")
+func startLeaderElectedTasks(ctx context.Context, k8s kubernetes.Interface, cfg appConfig, rec *reconciler.Reconciler, orphan *reconciler.OrphanRunnerSweep, jobStore store.JobStore) {
+	runReconciler := len(cfg.Repos) > 0
+	runPrune := jobStore != nil && cfg.JobStoreRetention > 0
+	if !runReconciler && !runPrune {
+		if len(cfg.Repos) == 0 {
+			slog.Info("reconciler disabled: no GHA_REPOS configured")
+		}
 		return
 	}
 
@@ -397,31 +462,101 @@ func startLeaderElectedReconciler(ctx context.Context, k8s kubernetes.Interface,
 			RetryPeriod:     2 * time.Second,
 			Callbacks: leaderelection.LeaderCallbacks{
 				OnStartedLeading: func(ctx context.Context) {
-					slog.Info("reconciler leader")
-					go func() {
-						ticker := time.NewTicker(cfg.ReconcileInterval)
-						defer ticker.Stop()
-						for {
-							if err := orphan.SweepOnce(ctx); err != nil {
-								slog.Error("orphan runner sweep failed", "err", err)
+					slog.Info("leader elected")
+					if runPrune {
+						go runJobStorePrune(ctx, jobStore, cfg.JobStoreRetention, cfg.JobStorePruneEvery)
+					}
+					if runReconciler {
+						go func() {
+							ticker := time.NewTicker(cfg.ReconcileInterval)
+							defer ticker.Stop()
+							for {
+								if err := orphan.SweepOnce(ctx); err != nil {
+									slog.Error("orphan runner sweep failed", "err", err)
+								}
+								select {
+								case <-ctx.Done():
+									return
+								case <-ticker.C:
+								}
 							}
-							select {
-							case <-ctx.Done():
-								return
-							case <-ticker.C:
-							}
+						}()
+						if err := rec.Run(ctx); err != nil && ctx.Err() == nil {
+							slog.Error("reconciler stopped", "err", err)
 						}
-					}()
-					if err := rec.Run(ctx); err != nil && ctx.Err() == nil {
-						slog.Error("reconciler stopped", "err", err)
+					} else {
+						<-ctx.Done()
 					}
 				},
 				OnStoppedLeading: func() {
-					slog.Info("reconciler lost leadership")
+					slog.Info("lost leadership")
 				},
 			},
 		})
 	}()
+}
+
+func runJobStorePrune(ctx context.Context, st store.JobStore, retentionDays int, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	prune := func() {
+		before := time.Now().AddDate(0, 0, -retentionDays)
+		n, err := st.Prune(ctx, before)
+		if err != nil {
+			slog.Error("job store prune failed", "err", err)
+			return
+		}
+		if n > 0 {
+			slog.Info("job store pruned", "rows", n)
+		}
+	}
+	prune()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prune()
+		}
+	}
+}
+
+func authWrap(token string, next http.Handler) http.Handler {
+	if token == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != token {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func envBool(key string, fallback bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return fallback
+	}
+	return b
+}
+
+func envInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
 
 func env(key, fallback string) string {

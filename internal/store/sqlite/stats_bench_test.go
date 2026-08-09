@@ -17,7 +17,7 @@ func seedLatencyRows(t *testing.B, st *sqlitestore.Store, n int) {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now().UTC()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		id := fmt.Sprintf("bench-%d", i)
 		lat := float64(i%100) + 0.5
 		_ = st.UpsertQueued(ctx, "org", "repo", "1", id, now)

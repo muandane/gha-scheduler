@@ -3,3 +3,7 @@
 .env
 .env.*
 !.env.example
+web/node_modules/
+web/dist/
+internal/console/static/*
+!internal/console/static/.gitkeep

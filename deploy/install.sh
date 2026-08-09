@@ -97,6 +97,7 @@ else
   die "Create gha-scheduler-secrets (see manifests/secrets.example.yaml)"
 fi
 
+apply_manifest "${MANIFESTS}/pvc-job-store.yaml"
 apply_manifest "${MANIFESTS}/deployment.yaml"
 apply_manifest "${MANIFESTS}/service.yaml"
 apply_ingress

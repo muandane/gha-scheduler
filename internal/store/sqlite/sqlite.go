@@ -177,7 +177,11 @@ func (s *Store) GetJob(ctx context.Context, jobID string) (*store.Job, error) {
 			exit_code, pod_name, dispatch_error, created_at, updated_at
 		FROM jobs WHERE job_id = ?
 	`, jobID)
-	return scanJob(row)
+	job, err := scanJob(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return job, err
 }
 
 func (s *Store) ListJobs(ctx context.Context, q store.ListQuery) (store.ListResult, error) {

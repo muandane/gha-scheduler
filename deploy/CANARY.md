@@ -49,7 +49,9 @@ For ≥ 20 jobs on the canary repo:
 | JIT / k8s failures | scheduler logs, `dispatch failed` | 0 |
 | Orphan GH runners | GH UI / API | 0 |
 
-Grafana queries: [`docs/grafana-canary.md`](docs/grafana-canary.md)
+Grafana queries: [`docs/grafana-canary.md`](docs/grafana-canary.md) (OTel deep-dive)
+
+Console checks: [`docs/console.md`](docs/console.md) — job timeline, `/api/v1/stats`, dispatch errors in UI header.
 
 ## 4. Expand repo-by-repo
 

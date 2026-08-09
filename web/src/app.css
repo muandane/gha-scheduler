@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+body {
+  @apply bg-zinc-50 text-zinc-900 antialiased;
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+code,
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
