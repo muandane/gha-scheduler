@@ -7,6 +7,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFESTS="${ROOT}/manifests"
 export KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/nuc-k3s.yaml}"
 
+if [[ -f "${ROOT}/homelab-cloudflare.env" ]]; then
+  # shellcheck source=/dev/null
+  source "${ROOT}/homelab-cloudflare.env"
+fi
+
 : "${GHA_WEBHOOK_HOSTNAME:?set GHA_WEBHOOK_HOSTNAME e.g. gha-scheduler.dev.itchallenge.fr}"
 : "${GHA_REPOS:?set GHA_REPOS e.g. org/repo1,org/repo2}"
 

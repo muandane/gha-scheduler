@@ -16,7 +16,25 @@ After changing ingress, reconcile gateway:
 flux reconcile kustomization infra-gateway-home --with-source
 ```
 
-## 1. DNS (`itchallenge.fr` zone)
+## 1. Cloudflare Tunnel route
+
+Homelab tunnel is **remotely managed** by Cloudflare (dashboard/API). `install.sh` calls `deploy/scripts/ensure-cloudflare-tunnel-route.sh` to add:
+
+| Hostname | Service |
+|----------|---------|
+| `gha-scheduler.dev.itchallenge.fr` | `http://gha-scheduler.gha-runners.svc.cluster.local:8080` |
+
+**Requires** API token with **Account → Cloudflare One Connectors → cloudflared:Edit** (the cluster `cloudflare-api-token` is DNS-only and is not enough):
+
+```bash
+export GHA_CF_API_TOKEN=<token>   # add to deploy/homelab-cloudflare.env
+```
+
+Manual fallback (Zero Trust → Tunnels → Public Hostname): same hostname/service as above.
+
+GitOps ingress (local config, no dashboard): `platforms-flux/infrastructure/gateway/home/cloudflared/configmap.yaml` — merge after switching tunnel to locally-managed config.
+
+## 2. DNS (`itchallenge.fr` zone)
 
 CNAME `gha-scheduler.dev` → tunnel (proxied), or use **Route DNS** in Zero Trust.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Idempotently add gha-scheduler (and peers) to a remotely-managed Cloudflare Tunnel.
+# Idempotently add gha-scheduler to a remotely-managed Cloudflare Tunnel via API.
 set -euo pipefail
 
 log() { printf '==> %s\n' "$*"; }
@@ -13,13 +13,32 @@ CF_ACCOUNT_ID="${GHA_CF_ACCOUNT_ID:-${CLOUDFLARE_ACCOUNT_ID:-}}"
 CF_TUNNEL_ID="${GHA_CF_TUNNEL_ID:-${CLOUDFLARE_TUNNEL_ID:-}}"
 KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/nuc-k3s.yaml}"
 
+load_tunnel_ids_from_cluster() {
+  command -v kubectl >/dev/null 2>&1 || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  kubectl -n gateway get secret cloudflared-credentials >/dev/null 2>&1 || return 0
+
+  local decoded
+  decoded="$(kubectl -n gateway get secret cloudflared-credentials -o jsonpath='{.data.token}' | base64 -d | python3 -c '
+import base64, json, sys
+token = sys.stdin.read().strip()
+payload = json.loads(base64.b64decode(token))
+print(payload["a"])
+print(payload["t"])
+')"
+  CF_ACCOUNT_ID="${CF_ACCOUNT_ID:-$(printf "%s" "$decoded" | sed -n '1p')}"
+  CF_TUNNEL_ID="${CF_TUNNEL_ID:-$(printf "%s" "$decoded" | sed -n '2p')}"
+}
+
 if [[ -z "${CF_API_TOKEN}" && -n "${KUBECONFIG:-}" ]]; then
   if kubectl -n gateway get secret cloudflare-api-token >/dev/null 2>&1; then
     CF_API_TOKEN="$(kubectl -n gateway get secret cloudflare-api-token -o jsonpath='{.data.api-token}' | base64 -d)"
   fi
 fi
 
-[[ -n "${CF_API_TOKEN}" ]] || die "set GHA_CF_API_TOKEN or CLOUDFLARE_API_TOKEN (Cloudflare One Connectors Write + Zone DNS)"
+load_tunnel_ids_from_cluster
+
+[[ -n "${CF_API_TOKEN}" ]] || die "set GHA_CF_API_TOKEN (needs Account → Cloudflare One Connectors → cloudflared:Edit)"
 
 cf_api() {
   local method="$1" path="$2"
@@ -27,31 +46,35 @@ cf_api() {
   curl -sfS -X "${method}" \
     -H "Authorization: Bearer ${CF_API_TOKEN}" \
     -H "Content-Type: application/json" \
-  "https://api.cloudflare.com/client/v4${path}" "$@"
+    "https://api.cloudflare.com/client/v4${path}" "$@"
 }
 
 if [[ -z "${CF_ACCOUNT_ID}" ]]; then
   log "Resolving Cloudflare account ID"
-  CF_ACCOUNT_ID="$(cf_api GET /accounts | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["result"][0]["id"] if d.get("result") else "")')"
+  CF_ACCOUNT_ID="$(cf_api GET "/zones?name=${GHA_CF_ZONE_NAME:-itchallenge.fr}" | python3 -c 'import json,sys; r=json.load(sys.stdin).get("result",[]); print(r[0]["account"]["id"] if r else "")')"
   [[ -n "${CF_ACCOUNT_ID}" ]] || die "could not resolve account ID — set GHA_CF_ACCOUNT_ID"
 fi
 
-if [[ -z "${CF_TUNNEL_ID}" ]]; then
-  log "Resolving tunnel ID"
-  CF_TUNNEL_ID="$(cf_api GET "/accounts/${CF_ACCOUNT_ID}/cfd_tunnel" | python3 -c '
-import json, sys
-data = json.load(sys.stdin)
-for t in data.get("result", []):
-    if t.get("deleted_at") in (None, ""):
-        print(t["id"])
-        break
-')"
-  [[ -n "${CF_TUNNEL_ID}" ]] || die "could not resolve tunnel ID — set GHA_CF_TUNNEL_ID"
-fi
+[[ -n "${CF_TUNNEL_ID}" ]] || die "could not resolve tunnel ID — set GHA_CF_TUNNEL_ID"
 
 log "Tunnel ${CF_TUNNEL_ID} (account ${CF_ACCOUNT_ID})"
 
-CURRENT="$(cf_api GET "/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${CF_TUNNEL_ID}/configurations")"
+CURRENT="$(cf_api GET "/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${CF_TUNNEL_ID}/configurations" 2>/dev/null)" || CURRENT=""
+
+if [[ -z "${CURRENT}" ]] || ! echo "${CURRENT}" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("success") else 1)' 2>/dev/null; then
+  die "$(cat <<EOF
+Cloudflare API rejected tunnel configuration access.
+Create an API token with Account → Cloudflare One Connectors → cloudflared:Edit, set:
+  export GHA_CF_API_TOKEN=<token>
+Then re-run install.sh.
+
+Or add Public Hostname manually:
+  https://one.dash.cloudflare.com/${CF_ACCOUNT_ID}/networks/connectors/tunnels/${CF_TUNNEL_ID}
+  Hostname: ${GHA_WEBHOOK_HOSTNAME}
+  Service:  ${GHA_TUNNEL_SERVICE_URL}
+EOF
+)"
+fi
 
 UPDATED="$(echo "${CURRENT}" | python3 - "${GHA_WEBHOOK_HOSTNAME}" "${GHA_TUNNEL_SERVICE_URL}" <<'PY'
 import json, sys
@@ -94,23 +117,6 @@ cf_api PUT "/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${CF_TUNNEL_ID}/configurations
 
 log "Updated tunnel ingress (includes ${GHA_WEBHOOK_HOSTNAME})"
 
-# DNS: ensure CNAME exists for webhook hostname
-ZONE_NAME="${GHA_CF_ZONE_NAME:-itchallenge.fr}"
-ZONE_ID="$(cf_api GET "/zones?name=${ZONE_NAME}" | python3 -c 'import json,sys; r=json.load(sys.stdin).get("result",[]); print(r[0]["id"] if r else "")')"
-if [[ -n "${ZONE_ID}" ]]; then
-  RECORD_NAME="${GHA_WEBHOOK_HOSTNAME%.${ZONE_NAME}}"
-  RECORD_NAME="${RECORD_NAME%.}"  # strip trailing dot if any
-  EXISTING="$(cf_api GET "/zones/${ZONE_ID}/dns_records?type=CNAME&name=${GHA_WEBHOOK_HOSTNAME}" || true)"
-  if ! echo "${EXISTING}" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("result") else 1)' 2>/dev/null; then
-    log "Creating DNS CNAME ${GHA_WEBHOOK_HOSTNAME} -> ${CF_TUNNEL_ID}.cfargotunnel.com"
-    cf_api POST "/zones/${ZONE_ID}/dns_records" \
-      --data "{\"type\":\"CNAME\",\"proxied\":true,\"name\":\"${RECORD_NAME}\",\"content\":\"${CF_TUNNEL_ID}.cfargotunnel.com\"}" >/dev/null
-  else
-    log "DNS record exists for ${GHA_WEBHOOK_HOSTNAME}"
-  fi
-fi
-
-log "Waiting for tunnel config propagation"
 for _ in $(seq 1 12); do
   if curl -sf --max-time 10 "https://${GHA_WEBHOOK_HOSTNAME}/healthz" >/dev/null 2>&1; then
     log "OK: https://${GHA_WEBHOOK_HOSTNAME}/healthz"
@@ -119,4 +125,4 @@ for _ in $(seq 1 12); do
   sleep 5
 done
 
-die "healthz still failing — check gha-scheduler pod and tunnel logs"
+die "healthz still failing — check gha-scheduler pod: kubectl -n gha-runners get pods -l app=gha-scheduler"
