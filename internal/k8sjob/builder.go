@@ -70,6 +70,7 @@ func BuildJob(cfg Config, spec labelquery.RunnerSpec) *batchv1.Job {
 		},
 		SecurityContext: &corev1.SecurityContext{
 			RunAsNonRoot: boolPtr(true),
+			RunAsUser:    int64Ptr(1001), // ghcr.io/actions/actions-runner USER runner
 		},
 		Command: []string{
 			"/bin/bash",
@@ -198,6 +199,8 @@ func memoryForSpec(spec labelquery.RunnerSpec, memPerCPU string) resource.Quanti
 
 //go:fix inline
 func int32Ptr(v int32) *int32 { return new(v) }
+
+func int64Ptr(v int64) *int64 { return new(v) }
 
 func boolPtr(v bool) *bool { return new(v) }
 
