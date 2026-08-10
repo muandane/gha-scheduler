@@ -238,6 +238,38 @@ func TestDispatchCleansUpSecretOnJobFailure(t *testing.T) {
 	}
 }
 
+func TestDispatchSkipsUnmanagedLabels(t *testing.T) {
+	gh := &fakeGH{resp: ghclient.JITConfigResponse{EncodedJITConfig: "jit-blob", RunnerName: "ghs-1-2"}}
+	k8s := fake.NewSimpleClientset()
+
+	d := dispatch.New(dispatch.Config{
+		Namespace:   "gha-runners",
+		RunnerImage: "ghcr.io/actions/runner:latest",
+	}, k8s, gh)
+
+	req := dispatch.Request{
+		Owner:  "org",
+		Repo:   "repo",
+		RunID:  "100",
+		JobID:  "200",
+		Labels: []string{"ubuntu-latest"},
+	}
+
+	if err := d.Dispatch(context.Background(), req); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if gh.calls != 0 {
+		t.Fatalf("gh calls: got %d want 0", gh.calls)
+	}
+	jobs, err := k8s.BatchV1().Jobs("gha-runners").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(jobs.Items) != 0 {
+		t.Fatalf("jobs: got %d want 0", len(jobs.Items))
+	}
+}
+
 type recordingGH struct {
 	resp            ghclient.JITConfigResponse
 	deletedRunnerID int64

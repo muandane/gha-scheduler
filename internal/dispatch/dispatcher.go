@@ -112,6 +112,11 @@ func (d *Dispatcher) SetWait(wait waitFunc) {
 
 // Dispatch creates a runner Job for the request unless one already exists.
 func (d *Dispatcher) Dispatch(ctx context.Context, req Request) error {
+	if !labelquery.Managed(req.Labels) {
+		slog.Debug("dispatch: skip unmanaged labels", "job_id", req.JobID, "labels", req.Labels)
+		return nil
+	}
+
 	defaults := labelquery.Defaults{
 		CPU:  req.LabelDefaults.CPU,
 		Arch: req.LabelDefaults.Arch,

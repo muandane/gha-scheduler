@@ -189,3 +189,20 @@ func TestParse(t *testing.T) {
 		})
 	}
 }
+
+func TestManaged(t *testing.T) {
+	tests := []struct {
+		labels []string
+		want   bool
+	}{
+		{[]string{"ubuntu-latest"}, false},
+		{[]string{"self-hosted", "linux"}, false},
+		{[]string{"runs-on=123", "cpu=2"}, true},
+		{nil, false},
+	}
+	for _, tt := range tests {
+		if got := labelquery.Managed(tt.labels); got != tt.want {
+			t.Fatalf("Managed(%v) = %v, want %v", tt.labels, got, tt.want)
+		}
+	}
+}

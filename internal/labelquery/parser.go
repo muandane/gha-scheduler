@@ -27,6 +27,18 @@ type Defaults struct {
 // WarnFunc is called for unknown label keys passed through to Raw (SPEC §1).
 type WarnFunc func(key, value string)
 
+// Managed reports whether workflow_job labels target gha-scheduler (RunsOn key=value syntax).
+// GitHub-hosted labels like ubuntu-latest have no runs-on= key and are ignored.
+func Managed(labels []string) bool {
+	for _, label := range labels {
+		key, _, ok := strings.Cut(label, "=")
+		if ok && key == "runs-on" {
+			return true
+		}
+	}
+	return false
+}
+
 // Parse converts key=value label strings into a RunnerSpec.
 // warn is optional; when set, unknown keys trigger a warning before storing in Raw.
 func Parse(labels []string, defaults Defaults, warn WarnFunc) (RunnerSpec, error) {
