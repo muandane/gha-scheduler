@@ -25,10 +25,14 @@ type APIError struct {
 }
 
 func (e *APIError) Error() string {
-	if e.RetryAfter > 0 {
-		return fmt.Sprintf("%v: status %d retry_after=%s", e.err, e.Status, e.RetryAfter)
+	msg := fmt.Sprintf("%v: status %d", e.err, e.Status)
+	if e.Body != "" {
+		msg += ": " + e.Body
 	}
-	return fmt.Sprintf("%v: status %d", e.err, e.Status)
+	if e.RetryAfter > 0 {
+		msg += fmt.Sprintf(" retry_after=%s", e.RetryAfter)
+	}
+	return msg
 }
 
 func (e *APIError) Unwrap() error { return e.err }

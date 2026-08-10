@@ -63,10 +63,11 @@ func New(baseURL string, opts ...Option) *Client {
 	return c
 }
 
-// JITConfigRequest is the body for generate-jit-config.
+// JITConfigRequest is the body for generate-jitconfig.
 type JITConfigRequest struct {
-	Name   string   `json:"name"`
-	Labels []string `json:"labels,omitempty"`
+	Name          string   `json:"name"`
+	RunnerGroupID int64    `json:"runner_group_id"`
+	Labels        []string `json:"labels,omitempty"`
 }
 
 // JITConfigResponse is the generate-jit-config response.

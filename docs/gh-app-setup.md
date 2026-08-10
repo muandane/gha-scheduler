@@ -18,7 +18,17 @@ GitHub → Settings → Developer settings → GitHub Apps → New GitHub App
 |------------|--------|
 | Actions | Read and write |
 | Metadata | Read-only |
-| Administration | Read-only (org runner scope) |
+| Administration | **Read and write** |
+
+### Permissions (organization) — required for org-wide App install
+
+| Permission | Access |
+|------------|--------|
+| Self-hosted runners | **Read and write** |
+
+After changing permissions, open the App install on **Simplifi-ED** → **Review request** / accept updated permissions.
+
+`generate-jitconfig` returns **403** if Administration is read-only or the install has not accepted new permissions.
 
 ### Subscribe to events
 

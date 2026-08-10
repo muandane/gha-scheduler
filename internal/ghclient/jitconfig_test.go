@@ -34,8 +34,9 @@ func TestGenerateJITConfig(t *testing.T) {
 	client := ghclient.New(srv.URL, ghclient.WithHTTPClient(srv.Client()))
 
 	resp, err := client.GenerateJITConfig(context.Background(), "org", "repo", ghclient.JITConfigRequest{
-		Name:   "ghs-123-456",
-		Labels: []string{"self-hosted", "linux", "x64"},
+		Name:          "ghs-123-456",
+		RunnerGroupID: 1,
+		Labels:        []string{"self-hosted", "linux", "x64"},
 	})
 	if err != nil {
 		t.Fatalf("GenerateJITConfig: %v", err)
@@ -50,6 +51,9 @@ func TestGenerateJITConfig(t *testing.T) {
 	}
 	if gotBody["name"] != "ghs-123-456" {
 		t.Fatalf("name: got %v", gotBody["name"])
+	}
+	if gotBody["runner_group_id"] != float64(1) {
+		t.Fatalf("runner_group_id: got %v", gotBody["runner_group_id"])
 	}
 	labels, ok := gotBody["labels"].([]any)
 	if !ok || len(labels) != 3 {

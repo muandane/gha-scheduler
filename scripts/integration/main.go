@@ -32,8 +32,9 @@ func main() {
 
 	runnerName := fmt.Sprintf("ghs-integration-%d", time.Now().Unix())
 	resp, err := client.GenerateJITConfig(ctx, owner, repo, ghclient.JITConfigRequest{
-		Name:   runnerName,
-		Labels: []string{"self-hosted", "linux", "x64"},
+		Name:          runnerName,
+		RunnerGroupID: 1,
+		Labels:        []string{"self-hosted", "linux", "x64"},
 	})
 	if err != nil {
 		fatal("generate-jit-config", err)

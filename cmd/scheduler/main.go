@@ -123,6 +123,7 @@ func main() {
 		SpotTolerationKey:   cfg.SpotTolerationKey,
 		SpotTolerationValue: cfg.SpotTolerationValue,
 		LockIdentity:        cfg.LockIdentity,
+		RunnerGroupID:       cfg.RunnerGroupID,
 		LabelWarn: func(key, value string) {
 			slog.Warn("unknown label key", "key", key, "value", value)
 		},
@@ -253,6 +254,7 @@ type appConfig struct {
 	SpotTolerationValue string
 	LockIdentity        string
 	OrphanRunnerGrace   time.Duration
+	RunnerGroupID       int64
 	JobStoreEnabled     bool
 	JobStorePath        string
 	JobStoreRetention   int
@@ -283,6 +285,12 @@ func loadConfig() (appConfig, error) {
 		return cfg, fmt.Errorf("invalid GHA_DEFAULT_CPU")
 	}
 	cfg.DefaultCPU = cpu
+
+	rgID, err := strconv.ParseInt(env("GHA_RUNNER_GROUP_ID", "1"), 10, 64)
+	if err != nil || rgID <= 0 {
+		return cfg, fmt.Errorf("invalid GHA_RUNNER_GROUP_ID")
+	}
+	cfg.RunnerGroupID = rgID
 
 	port, err := strconv.Atoi(env("GHA_CACHE_PORT", "8080"))
 	if err != nil {

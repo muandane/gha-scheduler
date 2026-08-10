@@ -45,6 +45,7 @@ type Config struct {
 	SpotTolerationValue string
 	LockIdentity        string
 	MaxAttempts         int
+	RunnerGroupID       int64
 	LabelWarn           labelquery.WarnFunc
 	OnParsed            func(ctx context.Context, req Request, spec labelquery.RunnerSpec)
 	OnJobCreated        func(jobID string)
@@ -85,6 +86,9 @@ func New(cfg Config, k8s kubernetes.Interface, gh GHClient) *Dispatcher {
 	}
 	if cfg.MaxAttempts == 0 {
 		cfg.MaxAttempts = defaultMaxAttempts
+	}
+	if cfg.RunnerGroupID == 0 {
+		cfg.RunnerGroupID = 1
 	}
 	return &Dispatcher{
 		cfg:     cfg,
@@ -163,8 +167,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req Request) error {
 	retryKey := "jit-" + req.JobID
 	err = withRetry(ctx, d.cfg.MaxAttempts, d.wait, d.backoff, retryKey, func() error {
 		resp, err := d.gh.GenerateJITConfig(ctx, req.Owner, req.Repo, ghclient.JITConfigRequest{
-			Name:   runnerName,
-			Labels: req.Labels,
+			Name:          runnerName,
+			RunnerGroupID: d.cfg.RunnerGroupID,
+			Labels:        req.Labels,
 		})
 		if err != nil {
 			return fmt.Errorf("dispatch: jit config: %w", err)
