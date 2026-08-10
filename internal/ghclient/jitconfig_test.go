@@ -44,7 +44,7 @@ func TestGenerateJITConfig(t *testing.T) {
 	if gotMethod != http.MethodPost {
 		t.Fatalf("method: got %s want POST", gotMethod)
 	}
-	wantPath := "/repos/org/repo/actions/runners/generate-jit-config"
+	wantPath := "/repos/org/repo/actions/runners/generate-jitconfig"
 	if gotPath != wantPath {
 		t.Fatalf("path: got %s want %s", gotPath, wantPath)
 	}

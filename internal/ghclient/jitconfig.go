@@ -84,9 +84,9 @@ type jitConfigAPIResponse struct {
 	} `json:"runner"`
 }
 
-// GenerateJITConfig calls POST /repos/{owner}/{repo}/actions/runners/generate-jit-config.
+// GenerateJITConfig calls POST /repos/{owner}/{repo}/actions/runners/generate-jitconfig.
 func (c *Client) GenerateJITConfig(ctx context.Context, owner, repo string, req JITConfigRequest) (JITConfigResponse, error) {
-	path := fmt.Sprintf("/repos/%s/%s/actions/runners/generate-jit-config", owner, repo)
+	path := fmt.Sprintf("/repos/%s/%s/actions/runners/generate-jitconfig", owner, repo)
 	body, err := json.Marshal(req)
 	if err != nil {
 		return JITConfigResponse{}, err

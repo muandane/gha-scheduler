@@ -30,12 +30,12 @@ GitHub → Settings → Developer settings → GitHub Apps → New GitHub App
 
 ```bash
 export GHA_EXPOSE=cloudflare-tunnel
-export GHA_WEBHOOK_HOSTNAME=gha-scheduler.dev.itchallenge.fr
+export GHA_WEBHOOK_HOSTNAME=gha-scheduler.itchallenge.fr
 ```
 
 Zero Trust → Tunnels → Public hostname:
 
-`gha-scheduler.dev.itchallenge.fr` → `http://gha-scheduler.gha-runners.svc.cluster.local:8080`
+`gha-scheduler.itchallenge.fr` → `http://gha-scheduler.gha-runners.svc.cluster.local:8080`
 
 No HTTPRoute, no Tailscale — GitHub hits Cloudflare edge → `cloudflared` → Service.
 
