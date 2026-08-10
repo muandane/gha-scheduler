@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/muandane/gha-scheduler/internal/cleanup"
 	"github.com/muandane/gha-scheduler/internal/dispatch"
 	"github.com/muandane/gha-scheduler/internal/ghclient"
 	"github.com/muandane/gha-scheduler/internal/k8sjob"
@@ -114,5 +115,74 @@ func TestSmokeWebhookCreatesJobAndSecret(t *testing.T) {
 	}
 	if *job.Spec.BackoffLimit != 0 {
 		t.Fatalf("backoffLimit: %d", *job.Spec.BackoffLimit)
+	}
+}
+
+// TestSmokeWebhookCompletedDeletesJob posts completed after queued and asserts Job is removed.
+func TestSmokeWebhookCompletedDeletesJob(t *testing.T) {
+	gh := &fakeGH{resp: ghclient.JITConfigResponse{EncodedJITConfig: "jit-smoke", RunnerName: "ghs-smoke-1-2"}}
+	k8s := fake.NewSimpleClientset()
+	cleaner := cleanup.NewJobCleaner(cleanup.Config{Namespace: "gha-runners"}, k8s, nil)
+
+	d := dispatch.New(dispatch.Config{
+		Namespace:   "gha-runners",
+		RunnerImage: "ghcr.io/actions/runner:latest",
+		CacheImage:  "ghcr.io/org/cache:latest",
+		CachePort:   8080,
+		MemPerCPU:   "2Gi",
+	}, k8s, gh)
+
+	h := webhook.New(webhook.Config{
+		Secret:        testSecret,
+		LabelDefaults: dispatch.LabelDefaults{CPU: 2, Arch: "x64"},
+		Cleanup:       cleaner,
+		CleanupGrace:  0,
+	}, d)
+
+	queued := []byte(`{
+		"action":"queued",
+		"workflow_job":{"id":9001,"run_id":8001,"labels":["runs-on=100","cpu=2","arch=x64"]},
+		"repository":{"full_name":"org/smoke-repo","owner":{"login":"org"},"name":"smoke-repo"}
+	}`)
+	postWebhook(t, h, queued)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		jobs, _ := k8s.BatchV1().Jobs("gha-runners").List(context.Background(), metav1.ListOptions{})
+		if len(jobs.Items) >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	completed := []byte(`{
+		"action":"completed",
+		"workflow_job":{"id":9001,"run_id":8001,"conclusion":"cancelled"},
+		"repository":{"full_name":"org/smoke-repo","owner":{"login":"org"},"name":"smoke-repo"}
+	}`)
+	postWebhook(t, h, completed)
+	h.Wait()
+
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		jobs, _ := k8s.BatchV1().Jobs("gha-runners").List(context.Background(), metav1.ListOptions{})
+		if len(jobs.Items) == 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	jobs, _ := k8s.BatchV1().Jobs("gha-runners").List(context.Background(), metav1.ListOptions{})
+	t.Fatalf("expected job deleted, still have %d", len(jobs.Items))
+}
+
+func postWebhook(t *testing.T, h *webhook.Handler, body []byte) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "workflow_job")
+	req.Header.Set("X-Hub-Signature-256", sign(testSecret, body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("webhook status: %d body=%s", rr.Code, rr.Body.String())
 	}
 }
