@@ -24,6 +24,8 @@ func TestBuildJob(t *testing.T) {
 		MemPerCPU:     "2Gi",
 		RunnerName:    "ghs-123-456",
 		JobName:       "ghs-job-123-456",
+		Owner:         "org",
+		Repo:          "repo",
 		OwnerRepo:     "org/repo",
 		RunID:         "123",
 		JobID:         "456",
@@ -48,10 +50,11 @@ func TestBuildJob(t *testing.T) {
 					Name:      "ghs-job-123-456",
 					Namespace: "gha-runners",
 					Labels: map[string]string{
-						k8sjob.LabelRunID:     "123",
-						k8sjob.LabelJobID:     "456",
-						k8sjob.LabelGHJob:     "456",
-						k8sjob.LabelOwnerRepo: "org/repo",
+						k8sjob.LabelRunID: "123",
+						k8sjob.LabelJobID: "456",
+						k8sjob.LabelGHJob: "456",
+						k8sjob.LabelOwner: "org",
+						k8sjob.LabelRepo:  "repo",
 					},
 				},
 				Spec: batchv1.JobSpec{
@@ -121,10 +124,11 @@ func TestBuildJob(t *testing.T) {
 					Name:      "ghs-job-123-456",
 					Namespace: "gha-runners",
 					Labels: map[string]string{
-						k8sjob.LabelRunID:     "123",
-						k8sjob.LabelJobID:     "456",
-						k8sjob.LabelGHJob:     "456",
-						k8sjob.LabelOwnerRepo: "org/repo",
+						k8sjob.LabelRunID: "123",
+						k8sjob.LabelJobID: "456",
+						k8sjob.LabelGHJob: "456",
+						k8sjob.LabelOwner: "org",
+						k8sjob.LabelRepo:  "repo",
 					},
 				},
 				Spec: batchv1.JobSpec{
@@ -262,6 +266,8 @@ func TestBuildJobActiveDeadline(t *testing.T) {
 		JITSecretName:     "jit",
 		JobName:           "job",
 		MemPerCPU:         "2Gi",
+		Owner:             "org",
+		Repo:              "repo",
 		OwnerRepo:         "org/repo",
 		RunID:             "1",
 		JobID:             "2",
@@ -270,8 +276,29 @@ func TestBuildJobActiveDeadline(t *testing.T) {
 	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != 3600 {
 		t.Fatalf("activeDeadlineSeconds: %v", job.Spec.ActiveDeadlineSeconds)
 	}
-	if job.Labels[k8sjob.LabelOwnerRepo] != "org/repo" {
-		t.Fatalf("owner_repo label: %q", job.Labels[k8sjob.LabelOwnerRepo])
+	if job.Labels[k8sjob.LabelOwner] != "org" || job.Labels[k8sjob.LabelRepo] != "repo" {
+		t.Fatalf("owner/repo labels: %v", job.Labels)
+	}
+}
+
+func TestBuildJobOwnerRepoLabels(t *testing.T) {
+	job := k8sjob.BuildJob(k8sjob.Config{
+		Namespace:     "gha-runners",
+		RunnerImage:   "img",
+		JITSecretName: "jit",
+		JobName:       "job",
+		MemPerCPU:     "2Gi",
+		Owner:         "Simplifi-ED",
+		Repo:          "sanad",
+		OwnerRepo:     "Simplifi-ED/sanad",
+		RunID:         "1",
+		JobID:         "2",
+	}, labelquery.RunnerSpec{RunID: "1", CPU: 2, Arch: "x64"})
+	if job.Labels[k8sjob.LabelOwner] != "Simplifi-ED" {
+		t.Fatalf("owner label: %q", job.Labels[k8sjob.LabelOwner])
+	}
+	if job.Labels[k8sjob.LabelRepo] != "sanad" {
+		t.Fatalf("repo label: %q", job.Labels[k8sjob.LabelRepo])
 	}
 }
 

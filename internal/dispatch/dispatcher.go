@@ -233,6 +233,8 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req Request) error {
 		SpotTolerationValue: d.cfg.SpotTolerationValue,
 		RunnerName:          runnerName,
 		JobName:             jobName,
+		Owner:               req.Owner,
+		Repo:                req.Repo,
 		OwnerRepo:           fmt.Sprintf("%s/%s", req.Owner, req.Repo),
 		RunID:               req.RunID,
 		JobID:               req.JobID,

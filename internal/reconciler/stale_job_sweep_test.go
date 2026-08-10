@@ -29,7 +29,7 @@ type fakeStaleMetrics struct {
 	skipped map[string]int
 }
 
-func (m *fakeStaleMetrics) RecordStaleJobFound(_ context.Context) { m.found++ }
+func (m *fakeStaleMetrics) RecordStaleJobFound(_ context.Context)        { m.found++ }
 func (m *fakeStaleMetrics) RecordJobDeleted(_ context.Context, _ string) { m.deleted++ }
 func (m *fakeStaleMetrics) RecordJobCleanupSkipped(_ context.Context, reason string) {
 	if m.skipped == nil {
@@ -60,7 +60,7 @@ func newStaleSweepTest(t *testing.T, k8sJobs []*batchv1.Job, pods []corev1.Pod, 
 	metrics := &fakeStaleMetrics{}
 	cleaner := cleanup.NewJobCleaner(cleanup.Config{Namespace: "gha-runners", Metrics: metrics}, k8s, &fakeLeaseChecker{})
 	sweep := NewStaleJobSweep(StaleJobSweepConfig{
-		Namespace:      "gha-runners",
+		Namespace:        "gha-runners",
 		CleanupGrace:     30 * time.Second,
 		StuckThreshold:   15 * time.Minute,
 		MaxRuntime:       6 * time.Hour,
@@ -76,7 +76,7 @@ func TestStaleJobSweep_ghCompletedJobDeleted(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "ghs-job-100-200",
 			Namespace:         "gha-runners",
-			Labels:            map[string]string{k8sjob.LabelGHJob: "200", k8sjob.LabelOwnerRepo: "org/repo"},
+			Labels:            map[string]string{k8sjob.LabelGHJob: "200", k8sjob.LabelOwner: "org", k8sjob.LabelRepo: "repo"},
 			CreationTimestamp: metav1.NewTime(time.Now().Add(-10 * time.Minute)),
 		},
 	}
@@ -101,7 +101,7 @@ func TestStaleJobSweep_stuckPendingDeleted(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "ghs-job-100-201",
 			Namespace:         "gha-runners",
-			Labels:            map[string]string{k8sjob.LabelGHJob: "201", k8sjob.LabelOwnerRepo: "org/repo"},
+			Labels:            map[string]string{k8sjob.LabelGHJob: "201", k8sjob.LabelOwner: "org", k8sjob.LabelRepo: "repo"},
 			CreationTimestamp: metav1.NewTime(time.Now().Add(-20 * time.Minute)),
 		},
 	}

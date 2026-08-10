@@ -2,6 +2,7 @@ package k8sjob
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -14,10 +15,11 @@ import (
 )
 
 const (
-	LabelRunID     = "gha-scheduler.run_id"
-	LabelJobID     = "gha-scheduler.job_id"
-	LabelGHJob     = "gha-scheduler.gh_job_id"
-	LabelOwnerRepo = "gha-scheduler.owner_repo"
+	LabelRunID = "gha-scheduler.run_id"
+	LabelJobID = "gha-scheduler.job_id"
+	LabelGHJob = "gha-scheduler.gh_job_id"
+	LabelOwner = "gha-scheduler.owner"
+	LabelRepo  = "gha-scheduler.repo"
 
 	// Official image WORKDIR; run.sh lives here (ghcr.io/actions/actions-runner).
 	runnerHome    = "/home/runner"
@@ -43,6 +45,8 @@ type Config struct {
 	SpotTolerationValue string
 	RunnerName          string
 	JobName             string
+	Owner               string
+	Repo                string
 	OwnerRepo           string
 	RunID               string
 	JobID               string
@@ -220,10 +224,19 @@ func jobLabels(cfg Config) map[string]string {
 		LabelJobID: cfg.JobID,
 		LabelGHJob: cfg.JobID,
 	}
-	if cfg.OwnerRepo != "" {
-		labels[LabelOwnerRepo] = cfg.OwnerRepo
+	if v := cfg.Owner; isValidLabelValue(v) {
+		labels[LabelOwner] = v
+	}
+	if v := cfg.Repo; isValidLabelValue(v) {
+		labels[LabelRepo] = v
 	}
 	return labels
+}
+
+var labelValueRE = regexp.MustCompile(`^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$`)
+
+func isValidLabelValue(v string) bool {
+	return v != "" && len(v) <= 63 && labelValueRE.MatchString(v)
 }
 
 func cacheSidecarEnv(cfg Config) []corev1.EnvVar {

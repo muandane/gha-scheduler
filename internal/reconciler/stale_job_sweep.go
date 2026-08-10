@@ -34,12 +34,12 @@ type StaleJobMetrics interface {
 
 // StaleJobSweepConfig configures the stale k8s Job sweep.
 type StaleJobSweepConfig struct {
-	Namespace         string
-	CleanupGrace      time.Duration
-	StuckThreshold    time.Duration
-	MaxRuntime        time.Duration
-	GHStatusCacheTTL  time.Duration
-	Metrics           StaleJobMetrics
+	Namespace        string
+	CleanupGrace     time.Duration
+	StuckThreshold   time.Duration
+	MaxRuntime       time.Duration
+	GHStatusCacheTTL time.Duration
+	Metrics          StaleJobMetrics
 }
 
 // StaleJobSweep removes scheduler k8s Jobs that are done on GitHub or stuck locally.
@@ -56,8 +56,8 @@ type StaleJobSweep struct {
 	metrics      StaleJobMetrics
 	log          func(msg string, args ...any)
 
-	mu         sync.Mutex
-	ghCache    map[string]ghJobCacheEntry
+	mu      sync.Mutex
+	ghCache map[string]ghJobCacheEntry
 }
 
 type ghJobCacheEntry struct {
@@ -204,12 +204,9 @@ func (s *StaleJobSweep) podReason(pods []corev1.Pod, jobAge time.Duration) strin
 }
 
 func (s *StaleJobSweep) githubReason(ctx context.Context, job *batchv1.Job, jobID string, now time.Time) string {
-	ownerRepo := job.Labels[k8sjob.LabelOwnerRepo]
-	if ownerRepo == "" || s.gh == nil {
-		return ""
-	}
-	owner, repo, err := splitRepo(ownerRepo)
-	if err != nil {
+	owner := job.Labels[k8sjob.LabelOwner]
+	repo := job.Labels[k8sjob.LabelRepo]
+	if owner == "" || repo == "" || s.gh == nil {
 		return ""
 	}
 	id, err := strconv.ParseInt(jobID, 10, 64)
