@@ -1,27 +1,55 @@
 #!/usr/bin/env bash
-# Install gha-scheduler on homelab k3s (requires gateway-stack + images built).
+# Install gha-scheduler on homelab k3s.
+# Public webhook: Cloudflare Tunnel (default). Optional: Envoy HTTPRoute for Tailscale-only.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFESTS="${ROOT}/manifests"
 export KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/nuc-k3s.yaml}"
 
-: "${GHA_WEBHOOK_HOSTNAME:?set GHA_WEBHOOK_HOSTNAME e.g. gha-scheduler.example.com}"
+: "${GHA_WEBHOOK_HOSTNAME:?set GHA_WEBHOOK_HOSTNAME e.g. gha-scheduler.dev.itchallenge.fr}"
 : "${GHA_REPOS:?set GHA_REPOS e.g. org/repo1,org/repo2}"
+
+GHA_EXPOSE="${GHA_EXPOSE:-cloudflare-tunnel}"
+GHA_GATEWAY_NAME="${GHA_GATEWAY_NAME:-ts-gateway-internal}"
+GHA_GATEWAY_NAMESPACE="${GHA_GATEWAY_NAMESPACE:-gateway}"
+GHA_GATEWAY_SECTION="${GHA_GATEWAY_SECTION:-https-gha-scheduler}"
+GHA_SCHEDULER_IMAGE="${GHA_SCHEDULER_IMAGE:-ghcr.io/muandane/gha-scheduler:102db14}"
+GHA_CACHE_IMAGE="${GHA_CACHE_IMAGE:-ghcr.io/muandane/gha-cache-sidecar:102db14}"
 
 log() { printf '==> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 require_gateway() {
-  kubectl -n gateway get gateway ts-gateway >/dev/null 2>&1 || \
-    die "ts-gateway not found — run cluster/kubernetes/private/install.sh gateway-stack first"
+  kubectl -n "${GHA_GATEWAY_NAMESPACE}" get gateway "${GHA_GATEWAY_NAME}" >/dev/null 2>&1 || \
+    die "Gateway ${GHA_GATEWAY_NAMESPACE}/${GHA_GATEWAY_NAME} not found"
+}
+
+require_cloudflared() {
+  kubectl -n gateway get deploy cloudflared >/dev/null 2>&1 || \
+    die "cloudflared not found in gateway namespace — deploy infra-gateway-home first"
+}
+
+apply_cloudflared_tunnel() {
+  log "Applying Cloudflare Tunnel ingress (includes ${GHA_WEBHOOK_HOSTNAME})"
+  chmod +x "${ROOT}/scripts/ensure-cloudflare-tunnel-route.sh"
+  "${ROOT}/scripts/ensure-cloudflare-tunnel-route.sh"
 }
 
 apply_configmap() {
   local tmp
   tmp="$(mktemp)"
-  export GHA_REPOS
-  envsubst '${GHA_REPOS}' < "${MANIFESTS}/configmap.yaml" > "${tmp}"
+  export GHA_REPOS GHA_CACHE_IMAGE
+  envsubst '${GHA_REPOS} ${GHA_CACHE_IMAGE}' < "${MANIFESTS}/configmap.yaml" > "${tmp}"
+  kubectl apply -f "${tmp}"
+  rm -f "${tmp}"
+}
+
+apply_deployment() {
+  local tmp
+  tmp="$(mktemp)"
+  export GHA_SCHEDULER_IMAGE
+  envsubst '${GHA_SCHEDULER_IMAGE}' < "${MANIFESTS}/deployment.yaml" > "${tmp}"
   kubectl apply -f "${tmp}"
   rm -f "${tmp}"
 }
@@ -30,11 +58,12 @@ apply_manifest() {
   kubectl apply -f "$1"
 }
 
-apply_ingress() {
+apply_httproute() {
   local tmp
   tmp="$(mktemp)"
-  export GHA_WEBHOOK_HOSTNAME
-  envsubst '${GHA_WEBHOOK_HOSTNAME}' < "${MANIFESTS}/ingress.yaml" > "${tmp}"
+  export GHA_WEBHOOK_HOSTNAME GHA_GATEWAY_NAME GHA_GATEWAY_NAMESPACE GHA_GATEWAY_SECTION
+  envsubst '${GHA_WEBHOOK_HOSTNAME} ${GHA_GATEWAY_NAME} ${GHA_GATEWAY_NAMESPACE} ${GHA_GATEWAY_SECTION}' \
+    < "${MANIFESTS}/httproute.yaml" > "${tmp}"
   kubectl apply -f "${tmp}"
   rm -f "${tmp}"
 }
@@ -77,8 +106,18 @@ install_seaweedfs() {
   kubectl -n gha-runners rollout status deployment/seaweedfs --timeout=5m
 }
 
-log "Precheck gateway"
-require_gateway
+log "Precheck expose mode: ${GHA_EXPOSE}"
+case "${GHA_EXPOSE}" in
+  cloudflare-tunnel)
+    require_cloudflared
+  ;;
+  ts-gateway)
+    require_gateway
+  ;;
+  *)
+    die "unknown GHA_EXPOSE=${GHA_EXPOSE} (use cloudflare-tunnel or ts-gateway)"
+    ;;
+esac
 
 log "Applying gha-scheduler namespace"
 apply_manifest "${MANIFESTS}/namespace.yaml"
@@ -98,9 +137,15 @@ else
 fi
 
 apply_manifest "${MANIFESTS}/pvc-job-store.yaml"
-apply_manifest "${MANIFESTS}/deployment.yaml"
+apply_deployment
 apply_manifest "${MANIFESTS}/service.yaml"
-apply_ingress
+
+if [[ "${GHA_EXPOSE}" == "ts-gateway" ]]; then
+  apply_httproute
+else
+  kubectl -n gha-runners delete httproute gha-scheduler-webhook --ignore-not-found
+  apply_cloudflared_tunnel
+fi
 
 log "Waiting for rollout"
 kubectl -n gha-runners rollout status deployment/gha-scheduler --timeout=5m
@@ -108,4 +153,4 @@ kubectl -n gha-runners rollout status deployment/gha-scheduler --timeout=5m
 log "Health check"
 kubectl -n gha-runners get pods -l app=gha-scheduler
 log "Webhook URL: https://${GHA_WEBHOOK_HOSTNAME}/webhook"
-log "Next: ./scripts/smoke.sh && ./scripts/canary-check.sh && deploy/CANARY.md"
+log "Next: ./scripts/canary-check.sh && deploy/CANARY.md"

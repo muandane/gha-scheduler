@@ -24,6 +24,23 @@ GitHub → Settings → Developer settings → GitHub Apps → New GitHub App
 
 - `Workflow job` only
 
+## Expose webhook (homelab)
+
+**Default: Cloudflare Tunnel** — same pattern as `sanad-admin.itchallenge.fr`. See [`deploy/cloudflare-tunnel.md`](../deploy/cloudflare-tunnel.md).
+
+```bash
+export GHA_EXPOSE=cloudflare-tunnel
+export GHA_WEBHOOK_HOSTNAME=gha-scheduler.dev.itchallenge.fr
+```
+
+Zero Trust → Tunnels → Public hostname:
+
+`gha-scheduler.dev.itchallenge.fr` → `http://gha-scheduler.gha-runners.svc.cluster.local:8080`
+
+No HTTPRoute, no Tailscale — GitHub hits Cloudflare edge → `cloudflared` → Service.
+
+Optional: `GHA_EXPOSE=ts-gateway` applies `deploy/manifests/httproute.yaml` for Tailscale-only Envoy routes.
+
 ## Install the App
 
 Install on org or selected repos. Note **Installation ID** → `GHA_INSTALLATION_ID`.

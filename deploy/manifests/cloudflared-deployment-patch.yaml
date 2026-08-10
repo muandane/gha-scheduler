@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: gateway
+  labels:
+    app.kubernetes.io/name: cloudflared
+    app.kubernetes.io/part-of: gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared
+        app.kubernetes.io/part-of: gateway
+    spec:
+      initContainers:
+        - name: cloudflared-config
+          image: python:3.12-alpine
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflared-credentials
+                  key: token
+          volumeMounts:
+            - name: cloudflared-config
+              mountPath: /etc/cloudflared
+            - name: cloudflared-ingress
+              mountPath: /ingress
+              readOnly: true
+          command:
+            - python3
+            - -c
+            - |
+              import base64
+              import json
+              import os
+              from pathlib import Path
+
+              token = json.loads(base64.b64decode(os.environ["TUNNEL_TOKEN"]))
+              creds = {
+                  "AccountTag": token["a"],
+                  "TunnelID": token["t"],
+                  "TunnelSecret": token["s"],
+              }
+              config_dir = Path("/etc/cloudflared")
+              creds_dir = config_dir / "creds"
+              creds_dir.mkdir(parents=True, exist_ok=True)
+              (creds_dir / "credentials.json").write_text(json.dumps(creds))
+              ingress = Path("/ingress/ingress.yaml").read_text()
+              config = (
+                  f"tunnel: {token['t']}\n"
+                  "credentials-file: /etc/cloudflared/creds/credentials.json\n"
+                  f"{ingress}"
+              )
+              (config_dir / "config.yaml").write_text(config)
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2025.2.1
+          args:
+            - tunnel
+            - --no-autoupdate
+            - --config
+            - /etc/cloudflared/config.yaml
+            - run
+          env: []
+          volumeMounts:
+            - name: cloudflared-config
+              mountPath: /etc/cloudflared
+              readOnly: true
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: cloudflared-config
+          emptyDir: {}
+        - name: cloudflared-ingress
+          configMap:
+            name: cloudflared-ingress

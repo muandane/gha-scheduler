@@ -20,7 +20,7 @@ spec:
       serviceAccountName: gha-scheduler
       containers:
         - name: scheduler
-          image: ghcr.io/muandane/gha-scheduler:latest
+          image: ${GHA_SCHEDULER_IMAGE}
           resources:
             requests:
               cpu: 50m

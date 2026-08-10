@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-ingress
+  namespace: gateway
+  labels:
+    app.kubernetes.io/name: cloudflared
+    app.kubernetes.io/part-of: gateway
+    app.kubernetes.io/managed-by: gha-scheduler
+data:
+  ingress.yaml: |
+    ingress:
+      - hostname: sanad.itchallenge.fr
+        service: http://nova-app.prod-nova.svc.cluster.local:8080
+      - hostname: sanad-admin.itchallenge.fr
+        service: http://admin-app.prod-nova.svc.cluster.local:9090
+      - hostname: dex.itchallenge.fr
+        service: http://dex.prod-nova.svc.cluster.local:5556
+      - hostname: gha-scheduler.dev.itchallenge.fr
+        service: http://gha-scheduler.gha-runners.svc.cluster.local:8080
+      - service: http_status:404

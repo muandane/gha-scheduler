@@ -2,6 +2,7 @@
 *.pem
 .env
 .env.*
+*.env*
 !.env.example
 web/node_modules/
 web/dist/
