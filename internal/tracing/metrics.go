@@ -24,6 +24,10 @@ type Metrics struct {
 	webhooksTotal           metric.Int64Counter
 	orphanRunnersDeleted    metric.Int64Counter
 	orphanRunnersSkipped    metric.Int64Counter
+	jobsDeleted             metric.Int64Counter
+	jobCleanupErrors        metric.Int64Counter
+	jobCleanupSkipped       metric.Int64Counter
+	staleJobsFound          metric.Int64Counter
 }
 
 // NewMetrics registers instruments on the given meter.
@@ -86,6 +90,30 @@ func NewMetrics(m metric.Meter) (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	jobsDeleted, err := m.Int64Counter("gha_scheduler.jobs_deleted_total",
+		metric.WithDescription("Scheduler k8s Jobs deleted by reason"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	jobCleanupErrors, err := m.Int64Counter("gha_scheduler.job_cleanup_errors_total",
+		metric.WithDescription("Job cleanup failures"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	jobCleanupSkipped, err := m.Int64Counter("gha_scheduler.job_cleanup_skipped_total",
+		metric.WithDescription("Job cleanup skips by reason"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	staleJobsFound, err := m.Int64Counter("gha_scheduler.stale_jobs_found_total",
+		metric.WithDescription("Stale k8s Jobs found by sweep"),
+	)
+	if err != nil {
+		return nil, err
+	}
 	return &Metrics{
 		dispatchLatency:         dispatchLatency,
 		scheduleLatency:         scheduleLatency,
@@ -96,6 +124,10 @@ func NewMetrics(m metric.Meter) (*Metrics, error) {
 		webhooksTotal:           webhooksTotal,
 		orphanRunnersDeleted:    orphanRunnersDeleted,
 		orphanRunnersSkipped:    orphanRunnersSkipped,
+		jobsDeleted:             jobsDeleted,
+		jobCleanupErrors:        jobCleanupErrors,
+		jobCleanupSkipped:       jobCleanupSkipped,
+		staleJobsFound:          staleJobsFound,
 	}, nil
 }
 
@@ -148,6 +180,38 @@ func (m *Metrics) RecordOrphanRunnerSkipped(ctx context.Context, reason string) 
 		return
 	}
 	m.orphanRunnersSkipped.Add(ctx, 1, metric.WithAttributes(attribute.String(attrReason, reason)))
+}
+
+// RecordJobDeleted increments k8s Job deletions.
+func (m *Metrics) RecordJobDeleted(ctx context.Context, reason string) {
+	if m == nil {
+		return
+	}
+	m.jobsDeleted.Add(ctx, 1, metric.WithAttributes(attribute.String(attrReason, reason)))
+}
+
+// RecordJobCleanupError increments job cleanup errors.
+func (m *Metrics) RecordJobCleanupError(ctx context.Context) {
+	if m == nil {
+		return
+	}
+	m.jobCleanupErrors.Add(ctx, 1)
+}
+
+// RecordJobCleanupSkipped increments job cleanup skips.
+func (m *Metrics) RecordJobCleanupSkipped(ctx context.Context, reason string) {
+	if m == nil {
+		return
+	}
+	m.jobCleanupSkipped.Add(ctx, 1, metric.WithAttributes(attribute.String(attrReason, reason)))
+}
+
+// RecordStaleJobFound increments stale jobs found by sweep.
+func (m *Metrics) RecordStaleJobFound(ctx context.Context) {
+	if m == nil {
+		return
+	}
+	m.staleJobsFound.Add(ctx, 1)
 }
 
 // RecordJobDuration records pod running → completed duration.

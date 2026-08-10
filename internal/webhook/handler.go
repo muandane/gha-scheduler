@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/muandane/gha-scheduler/internal/dispatch"
 )
@@ -23,16 +24,33 @@ type Dispatcher interface {
 	Dispatch(ctx context.Context, req dispatch.Request) error
 }
 
+// JobCleaner deletes scheduler k8s Jobs for a GitHub workflow job ID.
+type JobCleaner interface {
+	CleanupByJobID(ctx context.Context, jobID, reason string) (int, error)
+}
+
 // MetricsRecorder records webhook validity counters.
 type MetricsRecorder interface {
 	RecordWebhook(ctx context.Context, valid bool, reason string)
+}
+
+// CompletedInfo is passed to OnCompleted when a workflow job finishes on GitHub.
+type CompletedInfo struct {
+	Owner      string
+	Repo       string
+	RunID      string
+	JobID      string
+	Conclusion string
 }
 
 // Config configures the webhook handler.
 type Config struct {
 	Secret        string
 	LabelDefaults dispatch.LabelDefaults
+	Cleanup       JobCleaner
+	CleanupGrace  time.Duration
 	OnQueued      func(context.Context, dispatch.Request)
+	OnCompleted   func(context.Context, CompletedInfo)
 	Metrics       MetricsRecorder
 }
 
@@ -61,9 +79,10 @@ func (h *Handler) Wait() {
 type workflowJobEvent struct {
 	Action string `json:"action"`
 	Job    struct {
-		ID     int64    `json:"id"`
-		RunID  int64    `json:"run_id"`
-		Labels []string `json:"labels"`
+		ID         int64    `json:"id"`
+		RunID      int64    `json:"run_id"`
+		Labels     []string `json:"labels"`
+		Conclusion string   `json:"conclusion"`
 	} `json:"workflow_job"`
 	Repository struct {
 		FullName string `json:"full_name"`
@@ -148,10 +167,43 @@ func (h *Handler) handleWorkflowJob(body []byte) {
 			}
 		})
 	case "completed":
-		h.log.Info("workflow_job completed", "job_id", evt.Job.ID)
+		owner := evt.Repository.Owner.Login
+		repo := evt.Repository.Name
+		if owner == "" || repo == "" {
+			parts := strings.SplitN(evt.Repository.FullName, "/", 2)
+			if len(parts) == 2 {
+				owner, repo = parts[0], parts[1]
+			}
+		}
+		info := CompletedInfo{
+			Owner:      owner,
+			Repo:       repo,
+			RunID:      formatID(evt.Job.RunID),
+			JobID:      formatID(evt.Job.ID),
+			Conclusion: evt.Job.Conclusion,
+		}
+		h.log.Info("workflow_job completed", "job_id", info.JobID, "conclusion", info.Conclusion)
+		if h.cfg.OnCompleted != nil {
+			h.cfg.OnCompleted(context.Background(), info)
+		}
+		if h.cfg.Cleanup != nil {
+			h.scheduleCleanup(info)
+		}
 	default:
 		h.log.Debug("ignored workflow_job action", "action", evt.Action)
 	}
+}
+
+func (h *Handler) scheduleCleanup(info CompletedInfo) {
+	grace := max(h.cfg.CleanupGrace, 0)
+	h.wg.Go(func() {
+		if grace > 0 {
+			time.Sleep(grace)
+		}
+		if _, err := h.cfg.Cleanup.CleanupByJobID(context.Background(), info.JobID, "webhook_completed"); err != nil {
+			h.log.Error("cleanup failed", "err", err, "job_id", info.JobID)
+		}
+	})
 }
 
 func verifySignature(secret string, body []byte, header string) bool {

@@ -187,11 +187,13 @@ func (c *Client) ListRuns(ctx context.Context, owner, repo string, statuses []st
 
 // WorkflowJob is a queued workflow job for reconciler dispatch.
 type WorkflowJob struct {
-	ID        int64     `json:"id"`
-	RunID     int64     `json:"run_id"`
-	Status    string    `json:"status"`
-	Labels    []string  `json:"labels"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         int64     `json:"id"`
+	RunID      int64     `json:"run_id"`
+	Status     string    `json:"status"`
+	Conclusion string    `json:"conclusion"`
+	Labels     []string  `json:"labels"`
+	CreatedAt  time.Time `json:"created_at"`
+	CompletedAt time.Time `json:"completed_at"`
 }
 
 type workflowJobsResponse struct {
@@ -228,6 +230,23 @@ func (c *Client) ListRunJobs(ctx context.Context, owner, repo string, runID int6
 		page++
 	}
 	return all, nil
+}
+
+// GetWorkflowJob returns a single workflow job by ID.
+func (c *Client) GetWorkflowJob(ctx context.Context, owner, repo string, jobID int64) (WorkflowJob, error) {
+	path := fmt.Sprintf("/repos/%s/%s/actions/jobs/%d", owner, repo, jobID)
+	respBody, status, hdr, err := c.do(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return WorkflowJob{}, err
+	}
+	if status < 200 || status >= 300 {
+		return WorkflowJob{}, parseStatusError(status, string(respBody), hdr)
+	}
+	var job WorkflowJob
+	if err := json.Unmarshal(respBody, &job); err != nil {
+		return WorkflowJob{}, fmt.Errorf("ghclient: decode job: %w", err)
+	}
+	return job, nil
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]byte, int, http.Header, error) {

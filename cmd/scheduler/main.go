@@ -32,6 +32,7 @@ import (
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 
 	"github.com/muandane/gha-scheduler/internal/api"
+	"github.com/muandane/gha-scheduler/internal/cleanup"
 	"github.com/muandane/gha-scheduler/internal/console"
 	"github.com/muandane/gha-scheduler/internal/dispatch"
 	"github.com/muandane/gha-scheduler/internal/ghapp"
@@ -124,6 +125,7 @@ func main() {
 		SpotTolerationValue: cfg.SpotTolerationValue,
 		LockIdentity:        cfg.LockIdentity,
 		RunnerGroupID:       cfg.RunnerGroupID,
+		MaxRuntimeSeconds:   cfg.JobMaxRuntimeSeconds,
 		LabelWarn: func(key, value string) {
 			slog.Warn("unknown label key", "key", key, "value", value)
 		},
@@ -142,12 +144,21 @@ func main() {
 	}, k8s, gh)
 	dispatcher.SetLocker(jobLock)
 
+	var jobCleaner *cleanup.JobCleaner
+	if cfg.JobCleanupEnabled {
+		jobCleaner = cleanup.NewJobCleaner(cleanup.Config{
+			Namespace: cfg.Namespace,
+			Metrics:   jobMetrics,
+		}, k8s, jobLock)
+	}
+
 	go spanEmitter.Registry().RunEviction(ctx, time.Hour, 5*time.Minute)
 
-	wh := webhook.New(webhook.Config{
+	whCfg := webhook.Config{
 		Secret:        cfg.WebhookSecret,
 		LabelDefaults: labelDefaults,
 		Metrics:       jobMetrics,
+		CleanupGrace:  cfg.JobCleanupGrace,
 		OnQueued: func(ctx context.Context, req dispatch.Request) {
 			emitter.WebhookReceived(ctx, map[string]string{
 				"repo":   req.Owner + "/" + req.Repo,
@@ -155,7 +166,14 @@ func main() {
 				"job_id": req.JobID,
 			})
 		},
-	}, dispatcher)
+	}
+	if jobCleaner != nil {
+		whCfg.Cleanup = jobCleaner
+		whCfg.OnCompleted = func(ctx context.Context, info webhook.CompletedInfo) {
+			slog.Info("github workflow job completed", "job_id", info.JobID, "conclusion", info.Conclusion)
+		}
+	}
+	wh := webhook.New(whCfg, dispatcher)
 
 	mux := http.NewServeMux()
 	mux.Handle("/webhook", wh)
@@ -215,7 +233,18 @@ func main() {
 		Metrics:   jobMetrics,
 	}, gh, k8s, jobLock)
 
-	startLeaderElectedTasks(ctx, k8s, cfg, rec, orphanSweep, jobStore)
+	var staleSweep *reconciler.StaleJobSweep
+	if cfg.JobCleanupEnabled && jobCleaner != nil {
+		staleSweep = reconciler.NewStaleJobSweep(reconciler.StaleJobSweepConfig{
+			Namespace:      cfg.Namespace,
+			CleanupGrace:   cfg.JobCleanupGrace,
+			StuckThreshold: cfg.StuckJobThreshold,
+			MaxRuntime:     cfg.JobMaxRuntime,
+			Metrics:        jobMetrics,
+		}, gh, k8s, jobCleaner, jobLock)
+	}
+
+	startLeaderElectedTasks(ctx, k8s, cfg, rec, orphanSweep, staleSweep, jobStore)
 
 	<-ctx.Done()
 	wh.Wait()
@@ -261,6 +290,11 @@ type appConfig struct {
 	JobStorePruneEvery  time.Duration
 	ConsoleEnabled      bool
 	ConsoleToken        string
+	JobCleanupEnabled   bool
+	JobCleanupGrace     time.Duration
+	StuckJobThreshold   time.Duration
+	JobMaxRuntime       time.Duration
+	JobMaxRuntimeSeconds int64
 }
 
 func loadConfig() (appConfig, error) {
@@ -313,6 +347,11 @@ func loadConfig() (appConfig, error) {
 	cfg.JobStorePruneEvery = envDuration("GHA_JOB_STORE_PRUNE_INTERVAL", 6*time.Hour)
 	cfg.ConsoleEnabled = envBool("GHA_CONSOLE_ENABLED", false)
 	cfg.ConsoleToken = os.Getenv("GHA_CONSOLE_TOKEN")
+	cfg.JobCleanupEnabled = envBool("GHA_JOB_CLEANUP_ENABLED", true)
+	cfg.JobCleanupGrace = envDuration("GHA_JOB_CLEANUP_GRACE", 30*time.Second)
+	cfg.StuckJobThreshold = envDuration("GHA_STUCK_JOB_THRESHOLD", 15*time.Minute)
+	cfg.JobMaxRuntime = envDuration("GHA_JOB_MAX_RUNTIME", 6*time.Hour)
+	cfg.JobMaxRuntimeSeconds = int64(cfg.JobMaxRuntime / time.Second)
 
 	if cfg.ConsoleEnabled && !cfg.JobStoreEnabled {
 		return cfg, fmt.Errorf("GHA_CONSOLE_ENABLED requires GHA_JOB_STORE_ENABLED")
@@ -440,11 +479,12 @@ func startPodInformer(ctx context.Context, k8s kubernetes.Interface, namespace s
 	factory.WaitForCacheSync(ctx.Done())
 }
 
-func startLeaderElectedTasks(ctx context.Context, k8s kubernetes.Interface, cfg appConfig, rec *reconciler.Reconciler, orphan *reconciler.OrphanRunnerSweep, jobStore store.JobStore) {
+func startLeaderElectedTasks(ctx context.Context, k8s kubernetes.Interface, cfg appConfig, rec *reconciler.Reconciler, orphan *reconciler.OrphanRunnerSweep, stale *reconciler.StaleJobSweep, jobStore store.JobStore) {
 	runReconciler := len(cfg.Repos) > 0
 	runPrune := jobStore != nil && cfg.JobStoreRetention > 0
-	if !runReconciler && !runPrune {
-		if len(cfg.Repos) == 0 {
+	runSweep := stale != nil
+	if !runReconciler && !runPrune && !runSweep {
+		if len(cfg.Repos) == 0 && !runSweep {
 			slog.Info("reconciler disabled: no GHA_REPOS configured")
 		}
 		return
@@ -474,13 +514,20 @@ func startLeaderElectedTasks(ctx context.Context, k8s kubernetes.Interface, cfg 
 					if runPrune {
 						go runJobStorePrune(ctx, jobStore, cfg.JobStoreRetention, cfg.JobStorePruneEvery)
 					}
-					if runReconciler {
+					if runReconciler || runSweep {
 						go func() {
 							ticker := time.NewTicker(cfg.ReconcileInterval)
 							defer ticker.Stop()
 							for {
-								if err := orphan.SweepOnce(ctx); err != nil {
-									slog.Error("orphan runner sweep failed", "err", err)
+								if runReconciler && orphan != nil {
+									if err := orphan.SweepOnce(ctx); err != nil {
+										slog.Error("orphan runner sweep failed", "err", err)
+									}
+								}
+								if runSweep && stale != nil {
+									if err := stale.SweepOnce(ctx); err != nil {
+										slog.Error("stale job sweep failed", "err", err)
+									}
 								}
 								select {
 								case <-ctx.Done():
@@ -489,6 +536,8 @@ func startLeaderElectedTasks(ctx context.Context, k8s kubernetes.Interface, cfg 
 								}
 							}
 						}()
+					}
+					if runReconciler {
 						if err := rec.Run(ctx); err != nil && ctx.Err() == nil {
 							slog.Error("reconciler stopped", "err", err)
 						}

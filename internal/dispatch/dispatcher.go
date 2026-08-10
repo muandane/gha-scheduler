@@ -46,6 +46,7 @@ type Config struct {
 	LockIdentity        string
 	MaxAttempts         int
 	RunnerGroupID       int64
+	MaxRuntimeSeconds   int64
 	LabelWarn           labelquery.WarnFunc
 	OnParsed            func(ctx context.Context, req Request, spec labelquery.RunnerSpec)
 	OnJobCreated        func(jobID string)
@@ -235,6 +236,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req Request) error {
 		OwnerRepo:           fmt.Sprintf("%s/%s", req.Owner, req.Repo),
 		RunID:               req.RunID,
 		JobID:               req.JobID,
+		MaxRuntimeSeconds:   d.cfg.MaxRuntimeSeconds,
 	}, spec)
 
 	var createdJob *batchv1.Job

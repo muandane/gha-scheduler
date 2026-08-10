@@ -14,9 +14,14 @@ import (
 )
 
 const (
-	LabelRunID = "gha-scheduler.run_id"
-	LabelJobID = "gha-scheduler.job_id"
-	LabelGHJob = "gha-scheduler.gh_job_id"
+	LabelRunID     = "gha-scheduler.run_id"
+	LabelJobID     = "gha-scheduler.job_id"
+	LabelGHJob     = "gha-scheduler.gh_job_id"
+	LabelOwnerRepo = "gha-scheduler.owner_repo"
+
+	// Official image WORKDIR; run.sh lives here (ghcr.io/actions/actions-runner).
+	runnerHome    = "/home/runner"
+	runnerWorkDir = "/home/runner/_work"
 )
 
 // Config holds static job-building parameters from control-plane config.
@@ -41,6 +46,7 @@ type Config struct {
 	OwnerRepo           string
 	RunID               string
 	JobID               string
+	MaxRuntimeSeconds   int64
 }
 
 // BuildJob constructs a batch Job for the given RunnerSpec.
@@ -89,9 +95,9 @@ func BuildJob(cfg Config, spec labelquery.RunnerSpec) *batchv1.Job {
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "jit-config", MountPath: "/jit"},
-			{Name: "runner-work", MountPath: "/runner"},
+			{Name: "runner-work", MountPath: runnerWorkDir},
 		},
-		WorkingDir: "/runner",
+		WorkingDir: runnerHome,
 	}
 
 	containers := []corev1.Container{runner}
@@ -161,22 +167,26 @@ func BuildJob(cfg Config, spec labelquery.RunnerSpec) *batchv1.Job {
 		}}
 	}
 
+	jobSpec := batchv1.JobSpec{
+		BackoffLimit:            new(int32(0)),
+		TTLSecondsAfterFinished: new(int32(60)),
+		Template: corev1.PodTemplateSpec{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: labels,
+			},
+			Spec: podSpec,
+		},
+	}
+	if cfg.MaxRuntimeSeconds > 0 {
+		jobSpec.ActiveDeadlineSeconds = int64Ptr(cfg.MaxRuntimeSeconds)
+	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      cfg.JobName,
 			Namespace: cfg.Namespace,
 			Labels:    labels,
 		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit:            new(int32(0)),
-			TTLSecondsAfterFinished: new(int32(60)),
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: labels,
-				},
-				Spec: podSpec,
-			},
-		},
+		Spec: jobSpec,
 	}
 }
 
@@ -205,11 +215,15 @@ func int64Ptr(v int64) *int64 { return new(v) }
 func boolPtr(v bool) *bool { return new(v) }
 
 func jobLabels(cfg Config) map[string]string {
-	return map[string]string{
+	labels := map[string]string{
 		LabelRunID: cfg.RunID,
 		LabelJobID: cfg.JobID,
 		LabelGHJob: cfg.JobID,
 	}
+	if cfg.OwnerRepo != "" {
+		labels[LabelOwnerRepo] = cfg.OwnerRepo
+	}
+	return labels
 }
 
 func cacheSidecarEnv(cfg Config) []corev1.EnvVar {

@@ -48,9 +48,10 @@ func TestBuildJob(t *testing.T) {
 					Name:      "ghs-job-123-456",
 					Namespace: "gha-runners",
 					Labels: map[string]string{
-						k8sjob.LabelRunID: "123",
-						k8sjob.LabelJobID: "456",
-						k8sjob.LabelGHJob: "456",
+						k8sjob.LabelRunID:     "123",
+						k8sjob.LabelJobID:     "456",
+						k8sjob.LabelGHJob:     "456",
+						k8sjob.LabelOwnerRepo: "org/repo",
 					},
 				},
 				Spec: batchv1.JobSpec{
@@ -78,9 +79,9 @@ func TestBuildJob(t *testing.T) {
 									},
 									VolumeMounts: []corev1.VolumeMount{
 										{Name: "jit-config", MountPath: "/jit"},
-										{Name: "runner-work", MountPath: "/runner"},
+										{Name: "runner-work", MountPath: "/home/runner/_work"},
 									},
-									WorkingDir: "/runner",
+									WorkingDir: "/home/runner",
 								},
 							},
 							Volumes: []corev1.Volume{
@@ -120,9 +121,10 @@ func TestBuildJob(t *testing.T) {
 					Name:      "ghs-job-123-456",
 					Namespace: "gha-runners",
 					Labels: map[string]string{
-						k8sjob.LabelRunID: "123",
-						k8sjob.LabelJobID: "456",
-						k8sjob.LabelGHJob: "456",
+						k8sjob.LabelRunID:     "123",
+						k8sjob.LabelJobID:     "456",
+						k8sjob.LabelGHJob:     "456",
+						k8sjob.LabelOwnerRepo: "org/repo",
 					},
 				},
 				Spec: batchv1.JobSpec{
@@ -155,9 +157,9 @@ func TestBuildJob(t *testing.T) {
 									},
 									VolumeMounts: []corev1.VolumeMount{
 										{Name: "jit-config", MountPath: "/jit"},
-										{Name: "runner-work", MountPath: "/runner"},
+										{Name: "runner-work", MountPath: "/home/runner/_work"},
 									},
-									WorkingDir: "/runner",
+									WorkingDir: "/home/runner",
 								},
 								{
 									Name:  "cache-sidecar",
@@ -250,6 +252,26 @@ func TestBuildJob(t *testing.T) {
 				t.Fatalf("S3_ACCESS_KEY secret ref: %v", envByName["S3_ACCESS_KEY"])
 			}
 		})
+	}
+}
+
+func TestBuildJobActiveDeadline(t *testing.T) {
+	job := k8sjob.BuildJob(k8sjob.Config{
+		Namespace:         "gha-runners",
+		RunnerImage:       "img",
+		JITSecretName:     "jit",
+		JobName:           "job",
+		MemPerCPU:         "2Gi",
+		OwnerRepo:         "org/repo",
+		RunID:             "1",
+		JobID:             "2",
+		MaxRuntimeSeconds: 3600,
+	}, labelquery.RunnerSpec{RunID: "1", CPU: 2, Arch: "x64"})
+	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != 3600 {
+		t.Fatalf("activeDeadlineSeconds: %v", job.Spec.ActiveDeadlineSeconds)
+	}
+	if job.Labels[k8sjob.LabelOwnerRepo] != "org/repo" {
+		t.Fatalf("owner_repo label: %q", job.Labels[k8sjob.LabelOwnerRepo])
 	}
 }
 
