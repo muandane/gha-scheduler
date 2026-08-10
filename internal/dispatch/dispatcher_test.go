@@ -143,7 +143,7 @@ func TestDispatchInvalidLabelsFails(t *testing.T) {
 		Repo:          "repo",
 		RunID:         "100",
 		JobID:         "200",
-		Labels:        []string{"cpu=banana"},
+		Labels:        []string{"runs-on=100", "cpu=banana"},
 		LabelDefaults: dispatch.LabelDefaults{CPU: 2, Arch: "x64"},
 	})
 	if err == nil {
