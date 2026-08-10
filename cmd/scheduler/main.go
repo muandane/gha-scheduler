@@ -269,7 +269,7 @@ func loadConfig() (appConfig, error) {
 		ListenAddr:        env("GHA_LISTEN_ADDR", ":8080"),
 		Namespace:         env("GHA_NAMESPACE", "gha-runners"),
 		WebhookSecret:     os.Getenv("GHA_WEBHOOK_SECRET"),
-		RunnerImage:       env("GHA_RUNNER_IMAGE", "ghcr.io/actions/actions-runner:2.317.0"),
+		RunnerImage:       env("GHA_RUNNER_IMAGE", "ghcr.io/actions/actions-runner:2.336.0"),
 		CacheImage:        env("GHA_CACHE_IMAGE", "ghcr.io/muandane/gha-cache-sidecar:latest"),
 		MemPerCPU:         env("GHA_MEM_PER_CPU", "2Gi"),
 		ArchNodeLabel:     env("GHA_ARCH_NODE_LABEL", "kubernetes.io/arch"),
