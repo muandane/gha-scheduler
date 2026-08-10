@@ -209,6 +209,15 @@ func main() {
 	}
 
 	podWatcher := informer.NewPodWatcher(lifecycle)
+	if jobCleaner != nil {
+		podWatcher.SetOnRunnerExit(func(ctx context.Context, jobID string) {
+			go func() {
+				if _, err := jobCleaner.CleanupByJobID(context.Background(), jobID, "runner_exited"); err != nil {
+					slog.Error("runner exit cleanup failed", "err", err, "job_id", jobID)
+				}
+			}()
+		})
+	}
 	startPodInformer(ctx, k8s, cfg.Namespace, podWatcher)
 
 	rec := reconciler.New(reconciler.Config{
@@ -254,46 +263,46 @@ func main() {
 }
 
 type appConfig struct {
-	ServiceName         string
-	ListenAddr          string
-	Namespace           string
-	WebhookSecret       string
-	RunnerImage         string
-	CacheImage          string
-	CachePort           int32
-	MemPerCPU           string
-	ArchNodeLabel       string
-	PoolNodeLabel       string
-	DefaultCPU          int
-	DefaultArch         string
-	GHAPIBase           string
-	GHAppID             int64
-	GHInstallationID    int64
-	GHAppPrivateKey     []byte
-	Repos               []string
-	ReconcileInterval   time.Duration
-	StaleThreshold      time.Duration
-	LeaderElectionID    string
-	CacheBackend        string
-	S3Endpoint          string
-	S3Bucket            string
-	S3Region            string
-	S3SecretName        string
-	SpotTolerationKey   string
-	SpotTolerationValue string
-	LockIdentity        string
-	OrphanRunnerGrace   time.Duration
-	RunnerGroupID       int64
-	JobStoreEnabled     bool
-	JobStorePath        string
-	JobStoreRetention   int
-	JobStorePruneEvery  time.Duration
-	ConsoleEnabled      bool
-	ConsoleToken        string
-	JobCleanupEnabled   bool
-	JobCleanupGrace     time.Duration
-	StuckJobThreshold   time.Duration
-	JobMaxRuntime       time.Duration
+	ServiceName          string
+	ListenAddr           string
+	Namespace            string
+	WebhookSecret        string
+	RunnerImage          string
+	CacheImage           string
+	CachePort            int32
+	MemPerCPU            string
+	ArchNodeLabel        string
+	PoolNodeLabel        string
+	DefaultCPU           int
+	DefaultArch          string
+	GHAPIBase            string
+	GHAppID              int64
+	GHInstallationID     int64
+	GHAppPrivateKey      []byte
+	Repos                []string
+	ReconcileInterval    time.Duration
+	StaleThreshold       time.Duration
+	LeaderElectionID     string
+	CacheBackend         string
+	S3Endpoint           string
+	S3Bucket             string
+	S3Region             string
+	S3SecretName         string
+	SpotTolerationKey    string
+	SpotTolerationValue  string
+	LockIdentity         string
+	OrphanRunnerGrace    time.Duration
+	RunnerGroupID        int64
+	JobStoreEnabled      bool
+	JobStorePath         string
+	JobStoreRetention    int
+	JobStorePruneEvery   time.Duration
+	ConsoleEnabled       bool
+	ConsoleToken         string
+	JobCleanupEnabled    bool
+	JobCleanupGrace      time.Duration
+	StuckJobThreshold    time.Duration
+	JobMaxRuntime        time.Duration
 	JobMaxRuntimeSeconds int64
 }
 

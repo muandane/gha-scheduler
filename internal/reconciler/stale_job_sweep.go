@@ -185,6 +185,9 @@ func (s *StaleJobSweep) podReason(pods []corev1.Pod, jobAge time.Duration) strin
 		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 			return "pod_terminal"
 		}
+		if reason := k8sjob.PodRunnerCleanupReason(&pod); reason != "" {
+			return reason
+		}
 		if jobAge < s.stuck {
 			continue
 		}
@@ -194,7 +197,7 @@ func (s *StaleJobSweep) podReason(pods []corev1.Pod, jobAge time.Duration) strin
 		for _, cs := range pod.Status.ContainerStatuses {
 			if waiting := cs.State.Waiting; waiting != nil {
 				switch waiting.Reason {
-				case "ImagePullBackOff", "ErrImagePull", "CreateContainerConfigError", "InvalidImageName":
+				case "ImagePullBackOff", "ErrImagePull", "CreateContainerConfigError", "InvalidImageName", "CrashLoopBackOff":
 					return "stuck_container"
 				}
 			}

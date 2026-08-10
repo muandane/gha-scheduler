@@ -10,6 +10,7 @@
   } from './lib/api'
   import JobDetail from './components/JobDetail.svelte'
   import JobTable from './components/JobTable.svelte'
+  import JobsTraceOverview from './components/JobsTraceOverview.svelte'
   import StatCard from './components/StatCard.svelte'
 
   let jobs: Job[] = $state([])
@@ -90,6 +91,12 @@
       <JobDetail job={detailJob} {timeline} onBack={back} />
     {:else}
       <StatCard {stats} />
+      <div class="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
+        <h2 class="mb-4 text-sm font-medium uppercase tracking-wide text-zinc-500">
+          Recent traces
+        </h2>
+        <JobsTraceOverview {jobs} />
+      </div>
       <JobTable {jobs} onSelect={openJob} />
     {/if}
   </main>

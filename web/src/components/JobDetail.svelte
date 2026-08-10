@@ -2,7 +2,7 @@
   import type { Job } from '../lib/api'
   import { formatDuration } from '../lib/api'
   import StatusBadge from './StatusBadge.svelte'
-  import Timeline from './Timeline.svelte'
+  import TraceGanttChart from './TraceGanttChart.svelte'
   import type { TimelinePhase } from '../lib/api'
 
   let {
@@ -46,13 +46,15 @@
     {#if job.cache_enabled}<span class="rounded-full bg-zinc-100 px-3 py-1">cache</span>{/if}
   </div>
 
-  <div class="grid gap-6 lg:grid-cols-2">
+  <div class="space-y-6">
     <div class="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
-      <h3 class="mb-4 font-medium">Timeline</h3>
-      <Timeline phases={timeline} />
+      <h3 class="mb-4 font-medium">Trace detail</h3>
+      <TraceGanttChart {job} phases={timeline} />
     </div>
-    <div class="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
-      <h3 class="mb-4 font-medium">Latencies</h3>
+
+    <div class="grid gap-6 lg:grid-cols-2">
+      <div class="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
+        <h3 class="mb-4 font-medium">Latencies</h3>
       <dl class="space-y-3 text-sm">
         <div class="flex justify-between"><dt class="text-zinc-500">Dispatch</dt><dd>{formatDuration(job.dispatch_latency_sec)}</dd></div>
         <div class="flex justify-between"><dt class="text-zinc-500">Schedule</dt><dd>{formatDuration(job.schedule_latency_sec)}</dd></div>
@@ -68,6 +70,7 @@
           View on GitHub →
         </a>
       {/if}
+      </div>
     </div>
   </div>
 </div>

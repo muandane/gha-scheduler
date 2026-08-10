@@ -96,6 +96,35 @@ func TestPodWatchDoesNotRepeatSpans(t *testing.T) {
 	}
 }
 
+func TestPodWatchEmitsRunnerExit(t *testing.T) {
+	rec := &recordingEmitter{}
+	w := informer.NewPodWatcher(rec)
+	var exited string
+	w.SetOnRunnerExit(func(_ context.Context, jobID string) {
+		exited = jobID
+	})
+
+	oldPod := podWithSidecar("p1", corev1.PodRunning, true, true, false)
+	oldPod.Labels[k8sjob.LabelGHJob] = "200"
+	newPod := podWithSidecar("p1", corev1.PodRunning, true, false, false)
+	newPod.Labels[k8sjob.LabelGHJob] = "200"
+	newPod.Status.ContainerStatuses[0] = corev1.ContainerStatus{
+		Name: "runner",
+		State: corev1.ContainerState{
+			Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, FinishedAt: metav1.Now()},
+		},
+	}
+	w.OnUpdate(context.Background(), oldPod, newPod)
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && exited == "" {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if exited != "200" {
+		t.Fatalf("runner exit job_id: got %q want 200", exited)
+	}
+}
+
 func TestPodWatchEmitsCacheSidecarFailure(t *testing.T) {
 	rec := &recordingEmitter{}
 	w := informer.NewPodWatcher(rec)

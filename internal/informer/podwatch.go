@@ -19,9 +19,10 @@ type LifecycleEmitter interface {
 
 // PodWatcher maps pod updates to lifecycle span emissions.
 type PodWatcher struct {
-	emitter LifecycleEmitter
-	mu      sync.Mutex
-	seen    map[string]map[string]struct{}
+	emitter      LifecycleEmitter
+	onRunnerExit func(ctx context.Context, jobID string)
+	mu           sync.Mutex
+	seen         map[string]map[string]struct{}
 }
 
 // NewPodWatcher creates a PodWatcher.
@@ -30,6 +31,11 @@ func NewPodWatcher(emitter LifecycleEmitter) *PodWatcher {
 		emitter: emitter,
 		seen:    make(map[string]map[string]struct{}),
 	}
+}
+
+// SetOnRunnerExit registers a callback when the runner container exits or fails to start.
+func (w *PodWatcher) SetOnRunnerExit(fn func(ctx context.Context, jobID string)) {
+	w.onRunnerExit = fn
 }
 
 // OnUpdate handles pod update events from an informer.
@@ -71,12 +77,37 @@ func (w *PodWatcher) processPod(ctx context.Context, pod, oldPod *corev1.Pod) {
 			w.emitter.CacheSidecarFailed(ctx)
 		})
 	}
+	w.maybeRunnerExit(ctx, podKey, pod, oldPod)
 	if !isTerminal(oldPod) && isTerminal(pod) {
 		attrs["exit_code"] = exitCode(pod)
 		w.emitOnce(podKey, "completed", func() {
 			w.emitter.PodCompleted(ctx, attrs)
 		})
 	}
+}
+
+func (w *PodWatcher) maybeRunnerExit(ctx context.Context, podKey string, pod, oldPod *corev1.Pod) {
+	if w.onRunnerExit == nil {
+		return
+	}
+	jobID := pod.Labels[k8sjob.LabelGHJob]
+	if jobID == "" {
+		return
+	}
+	nowReason := k8sjob.PodRunnerCleanupReason(pod)
+	if nowReason == "" {
+		return
+	}
+	oldReason := ""
+	if oldPod != nil {
+		oldReason = k8sjob.PodRunnerCleanupReason(oldPod)
+	}
+	if oldReason != "" {
+		return
+	}
+	w.emitOnce(podKey, "runner_exit", func() {
+		w.onRunnerExit(ctx, jobID)
+	})
 }
 
 func (w *PodWatcher) emitOnce(podKey, event string, fn func()) {

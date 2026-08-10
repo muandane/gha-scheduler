@@ -123,6 +123,48 @@ func TestStaleJobSweep_stuckPendingDeleted(t *testing.T) {
 	}
 }
 
+func TestStaleJobSweep_runnerTerminatedWithSidecarRunning(t *testing.T) {
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "ghs-job-100-203",
+			Namespace:         "gha-runners",
+			Labels:            map[string]string{k8sjob.LabelGHJob: "203"},
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-2 * time.Minute)),
+		},
+	}
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ghs-job-100-203-abc",
+			Namespace: "gha-runners",
+			Labels:    map[string]string{k8sjob.LabelGHJob: "203"},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: "runner",
+					State: corev1.ContainerState{
+						Terminated: &corev1.ContainerStateTerminated{ExitCode: 1},
+					},
+				},
+				{
+					Name:  "cache-sidecar",
+					Ready: true,
+					State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+				},
+			},
+		},
+	}
+	sweep, metrics := newStaleSweepTest(t, []*batchv1.Job{job}, []corev1.Pod{pod}, &fakeWorkflowJobGH{jobs: map[int64]ghclient.WorkflowJob{}})
+
+	if err := sweep.SweepOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if metrics.deleted != 1 {
+		t.Fatalf("deleted: got %d want 1", metrics.deleted)
+	}
+}
+
 func TestStaleJobSweep_terminalPodDeleted(t *testing.T) {
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
