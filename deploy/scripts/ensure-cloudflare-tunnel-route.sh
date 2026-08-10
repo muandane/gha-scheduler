@@ -15,7 +15,7 @@ KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/nuc-k3s.yaml}"
 
 if [[ -z "${CF_API_TOKEN}" && -n "${KUBECONFIG:-}" ]]; then
   if kubectl -n gateway get secret cloudflare-api-token >/dev/null 2>&1; then
-    CF_API_TOKEN="$(kubectl -n gateway get secret cloudflare-api-token -o jsonpath='{.data.cloudflare-api-token}' | base64 -d)"
+    CF_API_TOKEN="$(kubectl -n gateway get secret cloudflare-api-token -o jsonpath='{.data.api-token}' | base64 -d)"
   fi
 fi
 
