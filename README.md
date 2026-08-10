@@ -50,14 +50,16 @@ export GHA_APP_ID=... GHA_INSTALLATION_ID=... GHA_APP_PRIVATE_KEY_FILE=./app.pem
 
 ## Deploy (homelab)
 
+The `deploy/` directory is **local only** (gitignored). Keep your homelab manifests, `install.sh`, and env files on your machine — they are not committed to this repo.
+
 ```bash
 export GHA_WEBHOOK_HOSTNAME=gha-scheduler.example.com
-export GHA_S3_ACCESS_KEY=... GHA_S3_SECRET_KEY=...
-./deploy/install.sh
+export GHA_REPOS=org/repo
+./deploy/install.sh   # from your local deploy/ tree
 ./scripts/canary-check.sh
 ```
 
-Details: [deploy/CANARY.md](deploy/CANARY.md), [docs/console.md](docs/console.md), [docs/grafana-canary.md](docs/grafana-canary.md).
+Details: local `deploy/CANARY.md`, [docs/console.md](docs/console.md), [docs/grafana-canary.md](docs/grafana-canary.md).
 
 ## Docs
 
@@ -66,7 +68,6 @@ Details: [deploy/CANARY.md](deploy/CANARY.md), [docs/console.md](docs/console.md
 | [docs/gh-app-setup.md](docs/gh-app-setup.md) | GitHub App, secrets, cutover |
 | [docs/ci.md](docs/ci.md) | CI/CD and image publishing |
 | [docs/console.md](docs/console.md) | Built-in job console (SQLite + embedded UI) |
-| [deploy/CANARY.md](deploy/CANARY.md) | Rollout checklist |
 
 ## License
 

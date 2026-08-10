@@ -8,3 +8,6 @@ web/node_modules/
 web/dist/
 internal/console/static/*
 !internal/console/static/.gitkeep
+
+# Homelab-only deploy manifests (not committed; keep local copy)
+/deploy/
